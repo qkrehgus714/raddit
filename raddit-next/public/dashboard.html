@@ -155,6 +155,41 @@
   tbody tr[data-ticker] { cursor: pointer; }
   tbody tr[data-ticker]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+  /* ── 헤더 버전 표시 ── */
+  .ver-badge {
+    color: var(--ink-3); font-size: 0.72rem; cursor: pointer;
+    user-select: none; transition: color .15s;
+    border-bottom: 1px dotted var(--ink-3);
+  }
+  .ver-badge:hover { color: var(--accent); border-color: var(--accent); }
+  .ver-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Changelog 패널 ── */
+  .cl-overlay {
+    position: fixed; inset: 0; z-index: 55; display: none;
+    background: rgba(20, 16, 8, 0.45);
+    align-items: flex-start; justify-content: center;
+    padding: 4vh 16px; overflow-y: auto;
+  }
+  .cl-overlay.open { display: flex; }
+  .cl-panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    width: 100%; max-width: 680px; padding: 20px 22px 18px; margin-bottom: 4vh;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
+  }
+  .cl-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .cl-head h2 { font-size: 1.15rem; margin: 0; }
+  .cl-close { cursor: pointer; font-size: 1.3rem; color: var(--ink-3); border: none; background: none; padding: 4px; line-height: 1; }
+  .cl-close:hover { color: var(--accent); }
+  .cl-body { max-height: 60vh; overflow-y: auto; }
+  .cl-release { border-bottom: 1px solid var(--line); padding: 12px 0; }
+  .cl-release:last-child { border-bottom: none; }
+  .cl-release-head { font-weight: 700; font-size: 0.95rem; margin-bottom: 6px; }
+  .cl-release-date { font-weight: 400; color: var(--ink-3); font-size: 0.8rem; margin-left: 6px; }
+  .cl-release-body { font-size: 0.85rem; line-height: 1.55; white-space: pre-wrap; color: var(--ink-2); }
+  .cl-loading { color: var(--ink-3); font-size: 0.85rem; padding: 20px 0; text-align: center; }
+  .cl-error { color: var(--down); font-size: 0.85rem; padding: 20px 0; text-align: center; }
+
   /* ── 종목 상세 모달 ── */
   .overlay {
     position: fixed; inset: 0; z-index: 60; display: none;
@@ -230,6 +265,7 @@
 <div class="wrap">
   <header>
     <h1><span class="live-dot" id="dot"></span>레딧 페니주식 워치보드</h1>
+    <span class="ver-badge" id="ver-badge" role="button" tabindex="0" title="변경이력 보기">v0.1.0</span>
     <span class="meta" id="snapshot-time">불러오는 중…</span>
   </header>
 
@@ -272,6 +308,18 @@
         <thead><tr id="thead-row"></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div class="cl-overlay" id="cl-overlay">
+    <div class="cl-panel" role="dialog" aria-modal="true" aria-labelledby="cl-title">
+      <div class="cl-head">
+        <h2 id="cl-title">변경이력</h2>
+        <button class="cl-close" id="cl-close" aria-label="닫기">&times;</button>
+      </div>
+      <div class="cl-body" id="cl-body">
+        <div class="cl-loading">불러오는 중…</div>
+      </div>
     </div>
   </div>
 
@@ -971,6 +1019,62 @@ $("btn-refresh").addEventListener("click", load);
 $("sel-filter").addEventListener("change", load);
 $("sel-price").addEventListener("change", load);
 load();
+
+// ── 버전 표시 (#9) ──
+fetch("/api/version").then(r => r.json()).then(d => {
+  const badge = $("ver-badge");
+  if (d.version) {
+    badge.textContent = `v${d.version}`;
+  }
+}).catch(() => {});
+
+// ── Changelog 패널 (#10) ──
+function openChangelog() {
+  $("cl-overlay").classList.add("open");
+  document.body.classList.add("modal-open");
+  if (!$("cl-body").dataset.loaded) loadChangelog();
+}
+function closeChangelog() {
+  $("cl-overlay").classList.remove("open");
+  document.body.classList.remove("modal-open");
+}
+function loadChangelog() {
+  const esc = s => String(s||"").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+  const body = $("cl-body");
+  body.innerHTML = '<div class="cl-loading">불러오는 중…</div>';
+  fetch("/api/changelog").then(r => {
+    if (!r.ok) throw new Error(String(r.status));
+    return r.json();
+  }).then(releases => {
+    if (!Array.isArray(releases) || releases.length === 0) {
+      body.innerHTML = '<div class="cl-loading">아직 등록된 릴리스가 없습니다.</div>';
+      body.dataset.loaded = "1";
+      return;
+    }
+    body.innerHTML = releases.map(r => {
+      const date = r.publishedAt ? new Date(r.publishedAt).toLocaleDateString("ko-KR") : "";
+      const safeBody = esc(r.body || "");
+      const safeTag = esc(r.tag || r.name);
+      return `<div class="cl-release">
+        <div class="cl-release-head">${safeTag}<span class="cl-release-date">${date}</span></div>
+        <div class="cl-release-body">${safeBody || "(릴리스 노트 없음)"}</div>
+      </div>`;
+    }).join("");
+    body.dataset.loaded = "1";
+  }).catch(() => {
+    body.innerHTML = '<div class="cl-error">이력을 불러오지 못했습니다.</div>';
+  });
+}
+$("ver-badge").addEventListener("click", openChangelog);
+$("ver-badge").addEventListener("keydown", e => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openChangelog(); }
+});
+$("cl-close").addEventListener("click", closeChangelog);
+$("cl-overlay").addEventListener("click", e => { if (e.target === $("cl-overlay")) closeChangelog(); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && $("cl-overlay").classList.contains("open")) closeChangelog();
+});
+
 </script>
 </body>
 </html>
