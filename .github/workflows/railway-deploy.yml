@@ -45,8 +45,8 @@ jobs:
         run: npm i -g @railway/cli@5
       - name: Deploy raddit-web
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service raddit-web --project b764aecd-7591-4a63-b244-397c27b4f94d --environment production
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: railway up --service raddit-web --project b764aecd-7591-4a63-b244-397c27b4f94d --environment production --detach --yes
         working-directory: raddit-next
 
   deploy-reddit:
@@ -60,6 +60,6 @@ jobs:
         run: npm i -g @railway/cli@5
       - name: Deploy raddit-reddit
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service raddit-reddit --project b764aecd-7591-4a63-b244-397c27b4f94d --environment production
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: railway up --service raddit-reddit --project b764aecd-7591-4a63-b244-397c27b4f94d --environment production --detach --yes
         working-directory: raddit-reddit
