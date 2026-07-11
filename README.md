@@ -3,79 +3,64 @@
 레딧 주식 서브레딧(r/wallstreetbets, r/pennystocks 등)의 티커 언급량을 집계해
 실제 페니주식($5 미만)만 걸러 보여주는 실시간 대시보드입니다.
 
-## 라이브 데모
-
-| 서비스 | URL |
-|--------|-----|
-| 웹 대시보드 | <https://raddit-web-production.up.railway.app> |
-| Reddit 수집 RPC | <https://raddit-reddit-production.up.railway.app/healthz> |
-
-## 모노레포 구조
-
-```
-raddit/
-├── raddit-next/       # Next.js 웹 서비스 — 대시보드 본체
-├── raddit-reddit/     # Python RPC 마이크로서비스 — Reddit 게시물 수집
-├── .github/workflows/ # Railway 자동 배포 GitHub Actions
-├── server.py          # 초기 버전 (파이썬 로컬 서버, 참고용)
-└── CONTRIBUTING.md    # 기여 가이드라인
-```
-
-### raddit-next (Next.js 웹)
-
-- 언급 순위 + 실시간 주가 스크리닝, 종목 클릭 시 캔들 차트(캔버스 직접 구현)
-- 서버 계산 기술적 분석: RSI · MACD · 볼린저밴드 · 이동평균 · 거래량/수급 시그널 (한국어 요약)
-- 3층 캐시 구조: CDN 엣지(`s-maxage` + SWR) → Next 데이터 캐시 → 인메모리(요청 합치기 · stale-if-error)
-- 버전 표시 배지 + GitHub Releases 기반 변경이력 뷰어
-
-### raddit-reddit (Python RPC)
-
-Next.js(Node undici)의 TLS 지문이 Reddit에 차단되는 문제를 해결하기 위해 분리된 마이크로서비스입니다.
-stdlib `urllib`만 사용(외부 HTTP 클라이언트 없이)하여 Reddit RSS를 수집하고 JSON으로 반환합니다.
-
-- `GET /healthz` — 헬스 체크
-- `GET /rpc/reddit-posts?ticker=GME&limit=20` — 티커별 게시물 수집
-- `X-RPC-Key` 공유 시크릿 인증 (`hmac.compare_digest` 상수시간 비교)
-- non-root 컨테이너 실행 + `PYTHONUNBUFFERED=1`
-
-## 배포 아키텍처
-
-```
-GitHub (main/dev push)
-  └── GitHub Actions (Railway Deploy)
-       ├── raddit-next/ 변경 시 → raddit-web 서비스 재배포
-       └── raddit-reddit/ 변경 시 → raddit-reddit 서비스 재배포
-```
-
-- **플랫폼:** Railway (단일 프로젝트, 서비스 2개)
-- **자동 배포:** GitHub Actions가 main/dev push 감지 → 변경 경로별로 해당 서비스만 배포
-- **시크릿 관리:** `RAILWAY_API_TOKEN` GitHub Secret 사용
-
-## 로컬 실행
-
-### 웹 (raddit-next)
-
-```bash
-cd raddit-next
-npm install
-npm run dev    # http://localhost:3000
-```
-
-### Reddit RPC (raddit-reddit)
-
-```bash
-cd raddit-reddit
-pip install -r requirements.txt
-uvicorn app:app --reload --port 8000    # http://localhost:8000
-```
-
-> 환경변수는 각 서비스 디렉토리의 `.env.example`을 참조하세요.
-
-## 이전 버전
-
-루트의 `server.py` / `penny_mentions.py` / `dashboard.html`은 표준 라이브러리만으로 만든
-첫 버전(파이썬 로컬 서버)으로, 참고용으로 남겨두었습니다 — `python server.py`로 실행됩니다.
+> **언급량은 관심도 지표일 뿐 투자 판단의 근거가 아닙니다.** 페니주식은 변동성과 조작 위험이 큽니다.
 
 ---
 
-> 언급량은 관심도 지표일 뿐 투자 판단의 근거가 아닙니다. 페니주식은 변동성과 조작 위험이 큽니다.
+## 왜 만들었나
+
+개인 투자자가 페니주식 시장에서 직면하는 문제는 세 가지입니다.
+
+1. **정보 비대칭** — 기관 투자자와 달리 실시간 시장 심리를 관측할 도구가 부족합니다.
+2. **소음과 신호의 혼재** — 레딧에 올라오는 수천 개 게시물 중 실제 가치가 있는 정보를 찾기 어렵습니다.
+3. **진입 장벽** — 기존 투자 도구는 고가이거나 페니주식에 특화되어 있지 않습니다.
+
+raddit은 이 문제를 해결합니다. 레딧 커뮤니티의 자발적 논의를 수집·분석하여
+개인 투자자가 **시장의 관심이 어디로 향하고 있는지** 직관적으로 파악할 수 있도록 돕습니다.
+
+## 무엇을 보여주나
+
+- **언급 순위** — 어느 티커가 레딧에서 가장 많이 논의되는지 한눈에 확인
+- **실시간 스크리닝** — 논의되는 종목 중 $5 미만 페니주식만 자동 필터링
+- **기술적 분석** — 종목 클릭 시 RSI · MACD · 볼린저밴드 · 이동평균 · 거래량/수급 시그널을 한국어 요약으로 제공
+- **캔들 차트** — 가격 흐름을 시각적으로 파악
+- **버전 이력** — 서비스 변경사항을 투명하게 공개 (GitHub Releases 연동)
+
+## 누구를 위한가
+
+| 대상 | 활용 방식 |
+|------|-----------|
+| 개인 투자자 | 매일 아침 시장 심리를 빠르게 체크하는 루틴 |
+| 페니주식 입문자 | 어떤 종목이 주목받는지 트렌드 파악 |
+| 커뮤니티 분석에 관심 있는 사람 | 레딧 언급량과 실제 주가의 상관관계 관찰 |
+
+## 지금 사용해보기
+
+🌐 **[raddit 워치보드 바로가기](https://raddit-web-production.up.railway.app)**
+
+## 데이터에 대하여
+
+- **수집 소스** — r/wallstreetbets, r/pennystocks 등 공개 서브레딧의 게시물
+- **갱신 주기** — 캐싱을 통해 빠른 로딩을 제공하되, 실시간 데이터를 정기적으로 반영
+- **정확성 한계** — 레딧 언급량은 시장 심리를 반영하는 **보조 지표**입니다. 최종 투자 판단은
+  본인의 추가 조사와 판단에 기반해야 합니다.
+
+## 프로젝트 구성
+
+```
+raddit/
+├── raddit-next/       # 웹 대시보드 (메인 서비스)
+├── raddit-reddit/     # 게시물 수집 서비스
+├── .github/workflows/ # 자동 배포 파이프라인
+└── CONTRIBUTING.md    # 기여 가이드라인
+```
+
+## 기여하기
+
+버그 제보, 기능 제안, 풀리퀘스트 모두 환영합니다.
+[`CONTRIBUTING.md`](./CONTRIBUTING.md)를 먼저 읽어주세요.
+
+## 라이선스
+
+이 프로젝트는 개인 학습 및 투자 보조 목적으로 제공됩니다.
+상업적 이용 및 재배포는 저장소 소유자의 사전 동의가 필요합니다.
