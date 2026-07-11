@@ -6,7 +6,6 @@
  * 두드리지 않는다. revalidate 값은 서비스 레이어의 TTL보다 약간 짧게 잡아
  * 메모리 캐시가 만료됐을 때 신선한 값을 받아오게 한다.
  */
-import { XMLParser } from "fast-xml-parser";
 import { Point, RANGE_INTERVAL } from "./indicators";
 
 const APEWISDOM_URL = (filter: string, page: number) =>
@@ -19,11 +18,11 @@ const NEWS_SEARCH_URL = (q: string) =>
 const SYMBOL_SEARCH_URL = (q: string) =>
   `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
 
-// 레딧 JSON API는 비로그인 요청을 403으로 차단하지만 RSS 검색 피드는 열려 있다.
-const REDDIT_SEARCH_SUBS = "pennystocks+wallstreetbets+stocks+investing+Shortsqueeze+smallstreetbets";
-const REDDIT_RSS_URL = (ticker: string, limit: number) =>
-  `https://www.reddit.com/r/${REDDIT_SEARCH_SUBS}/search.rss` +
-  `?q=${encodeURIComponent(`"${ticker}"`)}&restrict_sr=on&sort=new&t=month&limit=${limit}`;
+// 레딧 수집은 별도 Python RPC 마이크로서비스(raddit-reddit)에 위임한다.
+// Node(undici)의 TLS 지문이 Reddit에 차단(403/429)되기 때문 — 이슈 #13.
+// Python stdlib urllib 지문은 통과하므로 그쪽에서 RSS를 수집해 JSON으로 받는다.
+const REDDIT_RPC_URL = process.env.REDDIT_RPC_URL?.replace(/\/$/, "");
+const REDDIT_RPC_KEY = process.env.REDDIT_RPC_KEY;
 
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -139,26 +138,25 @@ export async function fetchChart(ticker: string, rng: string): Promise<ChartData
 
 export interface RedditPost { title: string; url: string | null; subreddit: string | null; ts: number | null; }
 
-/** 주식 서브레딧들에서 티커를 검색한 최근 1개월 게시물 (Atom 피드 파싱). */
+/**
+ * 주식 서브레딧들에서 티커를 검색한 최근 1개월 게시물.
+ * Reddit 호출 자체는 raddit-reddit(Python RPC)에 맡긴다. 여기선 단순 HTTP 호출.
+ * RPC 서비스 미설정(REDDIT_RPC_URL 없음) 시 빈 배열 + 에러 메시지를 던져
+ * 상위 서비스 레이어(getPosts)가 뉴스만이라도 반환하도록 한다.
+ */
 export async function fetchRedditPosts(ticker: string, limit = 15): Promise<RedditPost[]> {
-  const body = await (await get(REDDIT_RSS_URL(ticker, limit), 590)).text();
-  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
-  const feed = parser.parse(body);
-  let entries = feed?.feed?.entry ?? [];
-  if (!Array.isArray(entries)) entries = [entries];
-  const text = (v: unknown): string =>
-    typeof v === "object" && v !== null ? String((v as any)["#text"] ?? "") : String(v ?? "");
-  const posts: RedditPost[] = entries.map((e: any) => {
-    const updated = Date.parse(text(e.updated));
-    return {
-      title: text(e.title),
-      url: e.link?.["@_href"] ?? null,
-      subreddit: e.category?.["@_label"] ?? null,
-      ts: Number.isNaN(updated) ? null : Math.floor(updated / 1000),
-    };
-  });
-  posts.sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0));
-  return posts;
+  if (!REDDIT_RPC_URL) {
+    throw new Error("REDDIT_RPC_URL 이 설정되지 않음 (raddit-reddit 서비스 미구성)");
+  }
+  const url = `${REDDIT_RPC_URL}/rpc/reddit-posts?ticker=${encodeURIComponent(ticker)}&limit=${limit}`;
+  const headers: Record<string, string> = {};
+  if (REDDIT_RPC_KEY) headers["X-RPC-Key"] = REDDIT_RPC_KEY;
+  const res = await fetch(url, { headers, next: { revalidate: 590 } });
+  if (!res.ok) {
+    throw new Error(`Reddit RPC 응답 ${res.status} (raddit-reddit)`);
+  }
+  const data = (await res.json()) as { posts?: RedditPost[] };
+  return data.posts ?? [];
 }
 
 export interface NewsItem {
