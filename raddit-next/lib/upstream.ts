@@ -13,8 +13,9 @@ const APEWISDOM_URL = (filter: string, page: number) =>
   `https://apewisdom.io/api/v1.0/filter/${filter}/page/${page}`;
 const YAHOO_URL = (ticker: string) =>
   `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`;
+// 필터링(주 종목·최근 3개월)으로 걸러질 것을 감안해 넉넉히 받아온다 — 표시는 서비스 레이어가 8건으로 자름
 const NEWS_SEARCH_URL = (q: string) =>
-  `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=0&newsCount=8`;
+  `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=0&newsCount=25`;
 const SYMBOL_SEARCH_URL = (q: string) =>
   `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
 
@@ -160,9 +161,16 @@ export async function fetchRedditPosts(ticker: string, limit = 15): Promise<Redd
   return posts;
 }
 
-export interface NewsItem { title?: string; publisher?: string; url?: string; ts?: number; }
+export interface NewsItem {
+  title?: string;
+  publisher?: string;
+  url?: string;
+  ts?: number;
+  /** 기사에 태그된 종목들 — 첫 원소가 기사의 주 종목. 필터링용, 응답 전에 제거됨 */
+  relatedTickers?: string[];
+}
 
-/** Yahoo Finance 검색 API의 티커 관련 뉴스. */
+/** Yahoo Finance 검색 API의 티커 관련 뉴스 (무필터 원본 — 필터링은 서비스 레이어 담당). */
 export async function fetchNews(ticker: string): Promise<NewsItem[]> {
   const data = await getJson(NEWS_SEARCH_URL(ticker), 590);
   return (data.news ?? []).map((n: any) => ({
@@ -170,6 +178,7 @@ export async function fetchNews(ticker: string): Promise<NewsItem[]> {
     publisher: n.publisher,
     url: n.link,
     ts: n.providerPublishTime,
+    relatedTickers: n.relatedTickers,
   }));
 }
 

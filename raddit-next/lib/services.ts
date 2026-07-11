@@ -112,17 +112,59 @@ export interface PostsPayload {
 const reason = (r: PromiseRejectedResult): string =>
   r.reason instanceof Error ? r.reason.message : String(r.reason);
 
+const NEWS_MAX = 8;
+const NEWS_MAX_AGE_SEC = 90 * 86400; // 최근 3개월 이내 기사만
+const NEWS_RELAX_MIN = 3;            // 주 종목 필터 결과가 이보다 적으면 완화
+
+/**
+ * 회사명을 제목 매칭용 정규식으로. 법인 접미사(Inc., Corp. 등)를 떼어내
+ * "GameStop Corp." 같은 풀네임이 제목의 "GameStop"과 매칭되게 한다.
+ */
+function companyNamePattern(name: string | null): RegExp | null {
+  if (!name) return null;
+  const core = name
+    .replace(/[,.]/g, " ")
+    .replace(/\b(incorporated|corporation|company|limited|holdings?|inc|corp|ltd|llc|plc|co)\b/gi, " ")
+    .replace(/\s+/g, " ").trim();
+  if (core.length < 3) return null; // 너무 짧으면 오매칭 위험 — 이름 매칭 포기
+  return new RegExp(`\\b${core.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+}
+
+/**
+ * 무관한 종목 기사 혼입 방지 (#5) + 최근 3개월 제한.
+ * 1차: 주 종목(relatedTickers[0]) 기사 또는 제목에 회사명이 있는 기사.
+ * 2차: 1차가 NEWS_RELAX_MIN 미만이면 티커가 언급이라도 된 기사로 완화.
+ * 메타데이터가 아예 없으면 필터를 포기하고 원본을 보여준다 (빈 목록보다 낫다).
+ */
+function filterNews(items: up.NewsItem[], ticker: string, name: string | null): up.NewsItem[] {
+  const cutoff = Date.now() / 1000 - NEWS_MAX_AGE_SEC;
+  const fresh = items.filter(n => n.ts != null && n.ts >= cutoff);
+  const nameRe = companyNamePattern(name);
+  let picked = fresh.filter(n =>
+    n.relatedTickers?.[0] === ticker || (nameRe != null && nameRe.test(n.title ?? "")));
+  if (picked.length < NEWS_RELAX_MIN) {
+    const relaxed = fresh.filter(n => !picked.includes(n) && n.relatedTickers?.includes(ticker));
+    picked = [...picked, ...relaxed];
+  }
+  if (picked.length === 0) picked = fresh;
+  return picked.slice(0, NEWS_MAX).map(({ relatedTickers: _unused, ...rest }) => rest);
+}
+
 /** 레딧 게시물 + 뉴스를 병렬로 수집. 한쪽이 실패해도 나머지는 반환. */
 export async function getPosts(ticker: string): Promise<PostsPayload> {
   return postsCache.getOrCompute(ticker, async () => {
-    const [reddit, news] = await Promise.allSettled([
+    const [reddit, news, daily] = await Promise.allSettled([
       up.fetchRedditPosts(ticker),
       up.fetchNews(ticker),
+      getDaily(ticker), // 회사명 확보용 — 상세 모달의 일봉 캐시와 공유되어 대부분 무비용
     ]);
+    const name = daily.status === "fulfilled"
+      ? ((daily.value.meta.shortName ?? daily.value.meta.longName ?? null) as string | null)
+      : null;
     return {
       ticker,
       reddit: reddit.status === "fulfilled" ? reddit.value : [],
-      news: news.status === "fulfilled" ? news.value : [],
+      news: news.status === "fulfilled" ? filterNews(news.value, ticker, name) : [],
       reddit_error: reddit.status === "rejected" ? reason(reddit) : null,
       news_error: news.status === "rejected" ? reason(news) : null,
       generated_at: kstTime(),
