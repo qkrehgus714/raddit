@@ -3,6 +3,8 @@
 레딧 주식 서브레딧(r/wallstreetbets, r/pennystocks 등)의 티커 언급량을 집계해
 실제 페니주식($5 미만)만 걸러 보여주는 실시간 대시보드입니다.
 
+**🔗 라이브 데모: https://raddit-gold.vercel.app**
+
 **▶ [`raddit-next/`](./raddit-next) — Next.js 웹 서비스 (배포 버전, 여기가 본체)**
 
 - 언급 순위 + 실시간 주가 스크리닝, 종목 클릭 시 캔들 차트(캔버스 직접 구현)
