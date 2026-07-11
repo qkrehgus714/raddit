@@ -359,7 +359,7 @@ async function load() {
       chg: d.quote ? d.quote.day_change_pct : null,
       vol: d.quote ? d.quote.volume : null,
     }));
-    $("snapshot-time").textContent = `${data.generated_at} 기준 · ApeWisdom + Yahoo Finance`;
+    $("snapshot-time").textContent = `${data.generated_at} 기준`;
     $("board-title").textContent =
       `${FILTER_NAMES[filter] || filter} 언급 상위` +
       (maxPrice > 0 ? ` 페니주식 (<$${maxPrice})` : " 종목") + ` · ${rows.length}개`;
