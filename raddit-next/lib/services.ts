@@ -68,6 +68,9 @@ export interface DetailPayload {
   points: Point[];
   overlays: OverlayRow[] | null;
   analysis: Analysis;
+  bid_size: number | null;
+  ask_size: number | null;
+  buy_ratio_pct: number | null;
   generated_at: string;
 }
 
@@ -77,7 +80,9 @@ export function detailTtlSec(rng: string): number {
 
 export async function getDetail(ticker: string, rng: string): Promise<DetailPayload> {
   return detailCache.getOrCompute(`${ticker}|${rng}`, async () => {
-    const [chart, daily] = await Promise.all([up.fetchChart(ticker, rng), getDaily(ticker)]);
+    const [chart, daily, bidAsk] = await Promise.all([
+      up.fetchChart(ticker, rng), getDaily(ticker), up.fetchBidAsk(ticker),
+    ]);
     const meta = chart.meta;
     const regular = meta.currentTradingPeriod?.regular ?? {};
     return {
@@ -95,6 +100,9 @@ export async function getDetail(ticker: string, rng: string): Promise<DetailPayl
       // 이동평균·볼린저밴드 오버레이 — 봉 간격이 일봉인 범위에서만 의미가 있음
       overlays: RANGE_INTERVAL[rng] === "1d" ? computeOverlays(daily.points) : null,
       analysis: analyze(daily.points, daily.meta),
+      bid_size: bidAsk?.bid_size ?? null,
+      ask_size: bidAsk?.ask_size ?? null,
+      buy_ratio_pct: bidAsk?.buy_ratio_pct ?? null,
       generated_at: kstTime(),
     };
   }, { ttlMs: detailTtlSec(rng) * 1000 });

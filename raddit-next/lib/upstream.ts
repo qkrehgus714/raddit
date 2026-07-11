@@ -12,6 +12,8 @@ const APEWISDOM_URL = (filter: string, page: number) =>
   `https://apewisdom.io/api/v1.0/filter/${filter}/page/${page}`;
 const YAHOO_URL = (ticker: string) =>
   `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`;
+const YAHOO_QUOTE_URL = (ticker: string) =>
+  `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}`;
 // 필터링(주 종목·최근 3개월)으로 걸러질 것을 감안해 넉넉히 받아온다 — 표시는 서비스 레이어가 8건으로 자름
 const NEWS_SEARCH_URL = (q: string) =>
   `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=0&newsCount=25`;
@@ -35,6 +37,32 @@ async function get(url: string, revalidate: number): Promise<Response> {
   });
   if (!res.ok) throw new Error(`업스트림 응답 ${res.status} (${new URL(url).hostname})`);
   return res;
+}
+
+// v7/finance/quote(호가) 등 일부 Yahoo 엔드포인트는 세션 쿠키 + crumb 없이는
+// "Invalid Cookie"/"Invalid Crumb"로 거부한다 (v8 차트 엔드포인트는 인증 불필요, 별개).
+// 쿠키는 fc.yahoo.com에서, crumb는 그 쿠키로 /v1/test/getcrumb에서 발급받는다.
+// 인스턴스 수명 동안 재사용 — 매 요청마다 두 단계를 왕복하지 않도록.
+let yahooAuth: { cookie: string; crumb: string; expiresAt: number } | null = null;
+let yahooAuthPromise: Promise<{ cookie: string; crumb: string }> | null = null;
+
+async function bootstrapYahooAuth(): Promise<{ cookie: string; crumb: string }> {
+  const cookieRes = await fetch("https://fc.yahoo.com", { headers: { "User-Agent": BROWSER_UA } });
+  const cookie = cookieRes.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+  const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
+    headers: { "User-Agent": BROWSER_UA, Cookie: cookie },
+  });
+  if (!crumbRes.ok) throw new Error(`Yahoo crumb 발급 실패 ${crumbRes.status}`);
+  const crumb = await crumbRes.text();
+  const auth = { cookie, crumb, expiresAt: Date.now() + 3600_000 };
+  yahooAuth = auth;
+  return auth;
+}
+
+async function getYahooAuth(): Promise<{ cookie: string; crumb: string }> {
+  if (yahooAuth && yahooAuth.expiresAt > Date.now()) return yahooAuth;
+  if (!yahooAuthPromise) yahooAuthPromise = bootstrapYahooAuth().finally(() => { yahooAuthPromise = null; });
+  return yahooAuthPromise;
 }
 
 async function getJson(url: string, revalidate: number): Promise<any> {
@@ -82,6 +110,53 @@ export async function fetchQuote(ticker: string): Promise<Quote | null> {
       day_change_pct: prev ? ((price - prev) / prev) * 100 : null,
       volume: meta.regularMarketVolume ?? null,
     };
+  } catch {
+    return null;
+  }
+}
+
+export interface BidAsk {
+  bid: number | null;
+  ask: number | null;
+  bid_size: number | null;
+  ask_size: number | null;
+  /** 호가 잔량 중 매수(bid) 비중(%). 장외 등 호가가 없으면 null. */
+  buy_ratio_pct: number | null;
+}
+
+function parseBidAsk(q: any): BidAsk {
+  const bidSize: number | null = q.bidSize ?? null;
+  const askSize: number | null = q.askSize ?? null;
+  const total = (bidSize ?? 0) + (askSize ?? 0);
+  return {
+    bid: q.bid ?? null,
+    ask: q.ask ?? null,
+    bid_size: bidSize,
+    ask_size: askSize,
+    buy_ratio_pct: total > 0 ? round4((bidSize! / total) * 100) : null,
+  };
+}
+
+/**
+ * 호가 잔량(bid/ask size) 기반 매수/매도 비율 — Yahoo Finance L1 시세 스냅샷.
+ * 실제 체결 기반 매수/매도 비율이 아니라 한 시점의 호가 잔량 비중이라 참고용.
+ */
+export async function fetchBidAsk(ticker: string, retry = true): Promise<BidAsk | null> {
+  try {
+    const { cookie, crumb } = await getYahooAuth();
+    const url = `${YAHOO_QUOTE_URL(ticker)}&crumb=${encodeURIComponent(crumb)}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA, Cookie: cookie },
+      next: { revalidate: 45 },
+    });
+    if (!res.ok) {
+      // 세션 만료 등으로 거부됐을 수 있음 — 인증을 새로 받아 한 번만 재시도
+      if (retry) { yahooAuth = null; return fetchBidAsk(ticker, false); }
+      return null;
+    }
+    const data = await res.json();
+    const q = data.quoteResponse?.result?.[0];
+    return q ? parseBidAsk(q) : null;
   } catch {
     return null;
   }
