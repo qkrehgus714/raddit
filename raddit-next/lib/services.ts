@@ -1,6 +1,5 @@
 /**
  * 서비스 레이어 — 라우트 핸들러가 호출하는 비즈니스 로직 + 인메모리 캐시.
- * server.py의 get_payload / get_detail / get_posts / get_search에 대응한다.
  */
 import { TtlCache } from "./cache";
 import { analyze, computeOverlays, RANGE_INTERVAL, Point, Analysis, OverlayRow } from "./indicators";
