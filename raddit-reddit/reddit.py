@@ -35,9 +35,9 @@ def _throttle() -> None:
     with _req_lock:
         now = time.monotonic()
         wait = _MIN_INTERVAL - (now - _last_req)
-        if wait > 0:
-            time.sleep(wait)
         _last_req = time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
 
 # 레딧 JSON API는 비로그인 요청을 403으로 차단하지만 RSS 검색 피드는 (현재) 열려 있다.
 REDDIT_SEARCH_SUBS = "pennystocks+wallstreetbets+stocks+investing+Shortsqueeze+smallstreetbets"
@@ -96,13 +96,11 @@ def fetch_reddit_posts(ticker: str, limit: int = 15) -> list[dict]:
                 time.sleep(wait)
                 continue
             raise RedditError(f"Reddit 응답 {exc.code}") from exc
-        except Exception as exc:  # timeout, URLError 등
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
             if attempt < _MAX_RETRIES:
                 time.sleep(_RETRY_BASE * (attempt + 1))
                 continue
             raise RedditError(f"Reddit 요청 실패: {exc}") from exc
-    else:
-        raise RedditError("Reddit 요청 재시도 전부 실패")
 
     try:
         root = ET.fromstring(body)

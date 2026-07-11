@@ -13,7 +13,12 @@ COPY app.py reddit.py ./
 
 # Railway/Heroku 등은 PORT 환경변수를 주입한다. 로컬 기본은 8000.
 ENV PORT=8000
+ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
+
+# non-root 로 실행
+RUN useradd -r -s /bin/false appuser && chown -R appuser /app
+USER appuser
 
 # uvicorn 단일 프로세스. 트래픽이 커지면 worker 수 조정.
 CMD uvicorn app:app --host 0.0.0.0 --port ${PORT}
