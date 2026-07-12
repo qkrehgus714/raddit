@@ -233,6 +233,10 @@
   }
   .tip strong { color: var(--ink); font-size: 0.88rem; font-variant-numeric: tabular-nums; }
   .chart-meta, .dlg-status { font-size: 0.78rem; color: var(--ink-3); margin-top: 6px; }
+  .dlg-bidask { margin-top: 8px; }
+  .bidask-bar { height: 6px; border-radius: 3px; overflow: hidden; background: var(--down); display: flex; }
+  .bidask-buy { height: 100%; background: var(--up); }
+  .bidask-label { font-size: 0.78rem; color: var(--ink-3); margin-top: 4px; }
   .dlg-sub {
     font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--ink-3); margin: 18px 0 6px;
@@ -329,6 +333,10 @@
         <div>
           <div class="dlg-title"><span class="tk" id="dlg-ticker"></span><span class="name" id="dlg-name"></span></div>
           <div class="dlg-price"><span class="now" id="dlg-price"></span><span id="dlg-chg"></span></div>
+          <div class="dlg-bidask" id="dlg-bidask" hidden>
+            <div class="bidask-bar"><div class="bidask-buy" id="bidask-buy-bar"></div></div>
+            <div class="bidask-label" id="bidask-label"></div>
+          </div>
           <div class="meta" id="dlg-reddit"></div>
         </div>
         <button class="dlg-close" id="dlg-close" aria-label="닫기">✕</button>
@@ -546,6 +554,17 @@ function setChgPill(el, chg) {
   el.appendChild(s);
 }
 
+/** 호가 잔량 기반 매수/매도 비율 바 — 한 시점 스냅샷 참고용. */
+function renderBidAsk(d) {
+  const wrap = $("dlg-bidask");
+  if (!d || d.buy_ratio_pct == null) { wrap.hidden = true; return; }
+  const buyPct = d.buy_ratio_pct;
+  $("bidask-buy-bar").style.width = buyPct + "%";
+  $("bidask-label").textContent =
+    `호가 잔량 매수 ${buyPct.toFixed(0)}% · 매도 ${(100 - buyPct).toFixed(0)}%`;
+  wrap.hidden = false;
+}
+
 function openDetail(ticker, fallbackName) {
   // 목록에 없는 종목(검색으로 진입)도 열 수 있다 — 가격·이름은 상세 API가 채움
   const d = rows.find(r => r.ticker === ticker) || null;
@@ -554,6 +573,7 @@ function openDetail(ticker, fallbackName) {
   $("dlg-name").textContent = (d && d.name) || fallbackName || "";
   $("dlg-price").textContent = d && d.price != null ? fmtPrice(d.price) : "";
   setChgPill($("dlg-chg"), d ? d.chg : null);
+  renderBidAsk(null);
   if (d) {
     const mv = rankMove(d);
     $("dlg-reddit").textContent =
@@ -622,6 +642,7 @@ async function loadDetail() {
       if (data.range === "min" && data.prev_close)
         setChgPill($("dlg-chg"), (data.price - data.prev_close) / data.prev_close * 100);
     }
+    renderBidAsk(data);
     drawChart(data);
     renderAnalysis(data.analysis || {});
     $("dlg-status").textContent = `${data.generated_at} 갱신 · ${data.exchange || ""} ${data.currency || ""}`
