@@ -132,7 +132,7 @@ export default function Dashboard() {
       setSnapshot(`${data.generated_at} 기준`);
       setBoardTitle(
         `${FILTER_NAMES[filterVal()] || filterVal()} 언급 상위` +
-        (priceVal() > "0" ? ` 페니주식 (<$${priceVal()})` : " 종목") + ` · ${filtered.length}개`
+        (Number(priceVal()) > 0 ? ` 페니주식 (<$${priceVal()})` : " 종목") + ` · ${filtered.length}개`
       );
       setStatus("");
     } catch (err: any) {
@@ -570,7 +570,7 @@ export default function Dashboard() {
     document.body.classList.remove("modal-open");
   }
   function loadChangelog() {
-    const esc = (s: string) => String(s||"").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+    const esc = (s: string) => String(s||"").replace(/[<>&"']/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;","\"":"&quot;","'":"&#39;"}[c]));
     setClHtml('<div class="cl-loading">불러오는 중…</div>');
     fetch("/api/changelog").then(r => {
       if (!r.ok) throw new Error(String(r.status));
@@ -640,14 +640,18 @@ export default function Dashboard() {
     fetch("/api/version").then(r => r.json()).then(d => { if (d.version) setVersion(`v${d.version}`); }).catch(() => {});
     document.addEventListener("keydown", onKeydown);
     window.addEventListener("resize", onResize);
-    // W1: 검색 영역 외부 클릭 시 드롭다운 닫기
-    document.addEventListener("click", (e) => {
-      if (!(e.target as HTMLElement).closest(".search")) setSearchDrop(false);
-    });
+  // W1 수정: 외부 클릭 리스너를 명명하여 onCleanup에서 제거 가능하게
+  const onDocClick = (e: Event) => {
+    if (!(e.target as HTMLElement).closest(".search")) setSearchDrop(false);
+  };
+  document.addEventListener("click", onDocClick);
   });
 
   onCleanup(() => {
-    if (typeof document !== "undefined") document.removeEventListener("keydown", onKeydown);
+    if (typeof document !== "undefined") {
+      document.removeEventListener("keydown", onKeydown);
+      document.removeEventListener("click", onDocClick);
+    }
     if (typeof window !== "undefined") window.removeEventListener("resize", onResize);
     if (dlgTimer) clearTimeout(dlgTimer);
     if (searchTimer) clearTimeout(searchTimer);

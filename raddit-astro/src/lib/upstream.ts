@@ -28,6 +28,7 @@ const BROWSER_UA =
 async function getJson(url: string): Promise<any> {
   const res = await fetch(url, {
     headers: { "User-Agent": BROWSER_UA },
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`업스트림 응답 ${res.status} (${new URL(url).hostname})`);
   return res.json();
@@ -129,6 +130,7 @@ export async function fetchBidAsk(ticker: string, retry = true): Promise<BidAsk 
     const url = `${YAHOO_QUOTE_URL(ticker)}&crumb=${encodeURIComponent(crumb)}`;
     const res = await fetch(url, {
       headers: { "User-Agent": BROWSER_UA, Cookie: cookie },
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) {
       if (retry) { yahooAuth = null; return fetchBidAsk(ticker, false); }
@@ -226,7 +228,7 @@ export async function fetchRedditPosts(ticker: string, limit = 15): Promise<Redd
   const url = `${REDDIT_RPC_URL}/rpc/reddit-posts?ticker=${encodeURIComponent(ticker)}&limit=${limit}`;
   const headers: Record<string, string> = {};
   if (REDDIT_RPC_KEY) headers["X-RPC-Key"] = REDDIT_RPC_KEY;
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
   if (!res.ok) {
     throw new Error(`Reddit RPC 응답 ${res.status} (raddit-reddit)`);
   }

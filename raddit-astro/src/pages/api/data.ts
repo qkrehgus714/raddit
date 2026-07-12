@@ -10,7 +10,7 @@ export const GET: APIRoute = async ({ url }) => {
   }
   const maxPrice = Number(sp.get("max_price") ?? "5");
   const minMentions = Number(sp.get("min_mentions") ?? "2");
-  if (!Number.isFinite(maxPrice) || !Number.isInteger(minMentions)) {
+  if (!Number.isFinite(maxPrice) || !Number.isInteger(minMentions) || maxPrice < 0 || minMentions < 0) {
     return jsonError("숫자 파라미터가 잘못됐습니다.", 400);
   }
   try {
