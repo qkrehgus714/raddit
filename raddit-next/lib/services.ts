@@ -2,7 +2,7 @@
  * 서비스 레이어 — 라우트 핸들러가 호출하는 비즈니스 로직 + 인메모리 캐시.
  */
 import { TtlCache } from "./cache";
-import { analyze, computeOverlays, RANGE_INTERVAL, Point, Analysis, OverlayRow } from "./indicators";
+import { analyze, computeOverlays, Point, Analysis, OverlayRow } from "./indicators";
 import * as up from "./upstream";
 
 const PRICE_LOOKUP_LIMIT = 120;
@@ -51,7 +51,7 @@ export async function getData(
 
 /** 분석 지표 계산용 1년 일봉 (티커당 10분 캐시). */
 function getDaily(ticker: string): Promise<up.ChartData> {
-  return dailyCache.getOrCompute(ticker, () => up.fetchChart(ticker, "1y"));
+  return dailyCache.getOrCompute(ticker, () => up.fetchDailyChart(ticker));
 }
 
 export interface DetailPayload {
@@ -72,7 +72,8 @@ export interface DetailPayload {
 }
 
 export function detailTtlSec(rng: string): number {
-  return rng === "1d" ? 60 : 300; // 1D는 준실시간으로 자주 갱신
+  // 분 탭은 준실시간(60초 자동 갱신에 맞춤), 주·월·년은 봉이 느리게 바뀌므로 길게
+  return rng === "min" ? 60 : rng === "day" ? 300 : 600;
 }
 
 export async function getDetail(ticker: string, rng: string): Promise<DetailPayload> {
@@ -92,8 +93,8 @@ export async function getDetail(ticker: string, rng: string): Promise<DetailPayl
       regular_start: regular.start ?? null,
       regular_end: regular.end ?? null,
       points: chart.points,
-      // 이동평균·볼린저밴드 오버레이 — 봉 간격이 일봉인 범위에서만 의미가 있음
-      overlays: RANGE_INTERVAL[rng] === "1d" ? computeOverlays(daily.points) : null,
+      // 20·50일 이평선+볼린저 오버레이 — 일봉 탭에서만 의미가 있음 (주·월·년은 간격 불일치)
+      overlays: rng === "day" ? computeOverlays(daily.points) : null,
       analysis: analyze(daily.points, daily.meta),
       generated_at: kstTime(),
     };

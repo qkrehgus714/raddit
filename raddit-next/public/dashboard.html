@@ -528,8 +528,10 @@ function renderBody() {
 }
 
 // ── 종목 상세 모달: 실시간 차트 + 기술적 분석 ──
-const RANGES = [["1d", "1일"], ["5d", "5일"], ["1mo", "1개월"], ["6mo", "6개월"], ["1y", "1년"]];
-let dlgTicker = null, dlgRange = "1d", dlgTimer = null, dlgSeq = 0;
+// 탭은 봉 간격 기준 (#18) — 분=당일 5분봉, 일=6개월, 주=5년, 월=10년, 년=전체
+const RANGES = [["min", "분"], ["day", "일"], ["week", "주"], ["month", "월"], ["year", "년"]];
+const CANDLE_LABEL = { min: "5분봉", day: "일봉", week: "주봉", month: "월봉", year: "연봉" };
+let dlgTicker = null, dlgRange = "min", dlgTimer = null, dlgSeq = 0;
 let chartState = null, lastDetail = null;
 
 function fmtPrice(v) { return "$" + (Math.abs(v) < 1 ? v.toFixed(3) : v.toFixed(2)); }
@@ -547,7 +549,7 @@ function setChgPill(el, chg) {
 function openDetail(ticker, fallbackName) {
   // 목록에 없는 종목(검색으로 진입)도 열 수 있다 — 가격·이름은 상세 API가 채움
   const d = rows.find(r => r.ticker === ticker) || null;
-  dlgTicker = ticker; dlgRange = "1d"; lastDetail = null;
+  dlgTicker = ticker; dlgRange = "min"; lastDetail = null;
   $("dlg-ticker").textContent = ticker;
   $("dlg-name").textContent = (d && d.name) || fallbackName || "";
   $("dlg-price").textContent = d && d.price != null ? fmtPrice(d.price) : "";
@@ -599,15 +601,15 @@ async function loadDetail() {
     if (data.name && !$("dlg-name").textContent) $("dlg-name").textContent = data.name;
     if (data.price != null) {
       $("dlg-price").textContent = fmtPrice(data.price);
-      // 1일 범위의 prev_close만 전일 종가 — 다른 범위는 구간 시작 전 종가라 일간 등락이 아님
-      if (data.range === "1d" && data.prev_close)
+      // 분 탭(당일)의 prev_close만 전일 종가 — 다른 탭은 구간 시작 전 종가라 일간 등락이 아님
+      if (data.range === "min" && data.prev_close)
         setChgPill($("dlg-chg"), (data.price - data.prev_close) / data.prev_close * 100);
     }
     drawChart(data);
     renderAnalysis(data.analysis || {});
     $("dlg-status").textContent = `${data.generated_at} 갱신 · ${data.exchange || ""} ${data.currency || ""}`
-      + (range === "1d" ? " · 60초마다 자동 갱신" : "");
-    if (range === "1d") dlgTimer = setTimeout(loadDetail, 60000);
+      + (range === "min" ? " · 60초마다 자동 갱신" : "");
+    if (range === "min") dlgTimer = setTimeout(loadDetail, 60000);
   } catch (err) {
     if (seq !== dlgSeq) return;
     $("dlg-status").textContent = "불러오기 실패: " + err.message;
@@ -692,7 +694,7 @@ function drawChart(data) {
   const closes = pts.map(p => p.c);
   const highs = pts.map(p => p.h != null ? p.h : p.c);
   const lows = pts.map(p => p.l != null ? p.l : p.c);
-  const baseline = data.range === "1d" && data.prev_close ? data.prev_close : pts[0].c;
+  const baseline = data.range === "min" && data.prev_close ? data.prev_close : pts[0].c;
   let lo = Math.min(...lows, baseline), hi = Math.max(...highs, baseline);
   const pad = (hi - lo) * 0.06 || hi * 0.02 || 0.01;
   lo -= pad; hi += pad;
@@ -715,8 +717,8 @@ function drawChart(data) {
     ctx.fillText(fmtPrice(v), w - M.r + 8, gy);
   }
 
-  // 프리·애프터마켓 구간 음영 (1일 차트)
-  if (data.range === "1d" && data.regular_start && data.regular_end) {
+  // 프리·애프터마켓 구간 음영 (분 탭 = 당일 5분봉)
+  if (data.range === "min" && data.regular_start && data.regular_end) {
     let i0 = pts.findIndex(p => p.t >= data.regular_start);   // 첫 정규장 봉
     if (i0 === -1) i0 = pts.length;                           // 아직 프리마켓만 진행 중
     let i1 = pts.findIndex(p => p.t >= data.regular_end);     // 첫 애프터마켓 봉
@@ -749,7 +751,7 @@ function drawChart(data) {
     ctx.globalAlpha = 1;
   }
 
-  // 기준선 (1일: 전일 종가, 그 외: 구간 시작가)
+  // 기준선 (분 탭: 전일 종가, 그 외: 구간 시작가)
   ctx.setLineDash([4, 4]); ctx.strokeStyle = ink3; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(M.l, y(baseline)); ctx.lineTo(w - M.r, y(baseline)); ctx.stroke();
   ctx.setLineDash([]);
@@ -835,15 +837,25 @@ function drawChart(data) {
   ctx.beginPath(); ctx.roundRect(w - M.r + 4, ly - 9, tw + 8, 18, 4); ctx.fill();
   ctx.fillStyle = "#fff"; ctx.fillText(tag, w - M.r + 8, ly);
 
-  // X축 시간 라벨 — 한국시간(KST) 기준
+  // X축 시간 라벨 — 한국시간(KST) 기준, 봉 간격별 포맷
+  // 분 탭은 날짜 병기 — 미국 거래일이 KST로 이틀에 걸쳐 표시되는 혼동 방지 (#6)
   const tz = "Asia/Seoul";
-  const intraday = data.range === "1d" || data.range === "5d";
-  const axisFmt = new Intl.DateTimeFormat("ko-KR", data.range === "1d"
-    ? { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }
-    : { timeZone: tz, month: "numeric", day: "numeric" });
-  const tipFmt = new Intl.DateTimeFormat("ko-KR", intraday
-    ? { timeZone: tz, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
-    : { timeZone: tz, year: "numeric", month: "numeric", day: "numeric" });
+  const AXIS_OPT = {
+    min:   { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false },
+    day:   { month: "numeric", day: "numeric" },
+    week:  { year: "2-digit", month: "numeric" },
+    month: { year: "numeric" },
+    year:  { year: "numeric" },
+  };
+  const TIP_OPT = {
+    min:   { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false },
+    day:   { year: "numeric", month: "numeric", day: "numeric" },
+    week:  { year: "numeric", month: "numeric", day: "numeric" },
+    month: { year: "numeric", month: "numeric" },
+    year:  { year: "numeric", month: "numeric" },
+  };
+  const axisFmt = new Intl.DateTimeFormat("ko-KR", { timeZone: tz, ...(AXIS_OPT[data.range] || AXIS_OPT.day) });
+  const tipFmt = new Intl.DateTimeFormat("ko-KR", { timeZone: tz, ...(TIP_OPT[data.range] || TIP_OPT.day) });
   ctx.fillStyle = ink3; ctx.font = "11px 'Segoe UI', sans-serif"; ctx.textBaseline = "top";
   [0, 1 / 3, 2 / 3, 1].forEach(f => {
     const i = Math.round(f * (pts.length - 1));
@@ -852,10 +864,13 @@ function drawChart(data) {
   });
 
   const rangeHi = Math.max(...highs), rangeLo = Math.min(...lows);
+  // 실제 표시 구간을 명시해 탭 라벨과 데이터 구간의 혼동을 없앤다 (#6 통합)
+  const span = `${tipFmt.format(new Date(pts[0].t * 1000))} ~ ${tipFmt.format(new Date(pts[pts.length - 1].t * 1000))}`;
   $("chart-meta").textContent =
-    `표시 구간 고가 ${fmtPrice(rangeHi)} · 저가 ${fmtPrice(rangeLo)}` +
-    (data.range === "1d" && data.prev_close ? ` · 전일 종가 ${fmtPrice(data.prev_close)} (점선)` : " · 점선은 구간 시작가") +
-    " · 한국시간 기준" + (data.range === "1d" ? ", 프리·애프터마켓 포함" : "");
+    `${CANDLE_LABEL[data.range] || ""} ${span}` +
+    ` · 고가 ${fmtPrice(rangeHi)} · 저가 ${fmtPrice(rangeLo)}` +
+    (data.range === "min" && data.prev_close ? ` · 전일 종가 ${fmtPrice(data.prev_close)} (점선)` : " · 점선은 구간 시작가") +
+    " · 한국시간 기준" + (data.range === "min" ? ", 프리·애프터마켓 포함" : "");
 
   chartState = { pts, x, y, M, w, h, slot, tipFmt };
 }
