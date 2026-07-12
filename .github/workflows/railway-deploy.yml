@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - id: check
         run: |
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
@@ -48,6 +48,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Inject version (git describe)
+        id: version
+        working-directory: raddit-astro
+        run: |
+          # 가장 가까운 태그로부터의 거리 + SHA로 버전 생성
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            TAG=$(git describe --tags --abbrev=0)
+            TAG_BASE=${TAG#v}
+            COMMITS_AHEAD=$(git rev-list --count ${TAG}..HEAD)
+            SHA=$(git rev-parse --short HEAD)
+            if [ "$COMMITS_AHEAD" -eq 0 ]; then
+              VERSION="${TAG_BASE}"
+            else
+              VERSION="${TAG_BASE}.dev${COMMITS_AHEAD}.${SHA}"
+            fi
+          else
+            # 태그가 없으면 초기 버전
+            SHA=$(git rev-parse --short HEAD)
+            VERSION="0.1.0.dev1.${SHA}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # package.json에 버전 주입
+          npm version "${VERSION}" --no-git-tag-version --allow-pre-release
+          echo "Injected version: ${VERSION}"
       - name: Install Railway CLI
         run: npm i -g @railway/cli@5
       - name: Resolve service name
