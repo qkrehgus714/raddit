@@ -529,7 +529,7 @@ function renderBody() {
 
 // ── 종목 상세 모달: 실시간 차트 + 기술적 분석 ──
 // 탭은 봉 간격 기준 (#18) — 분=당일 5분봉, 일=6개월, 주=5년, 월=10년, 년=전체
-const RANGES = [["min", "분"], ["day", "일"], ["week", "주"], ["month", "월"], ["year", "년"]];
+const RANGES = [["min", "5분"], ["day", "일"], ["week", "주"], ["month", "월"], ["year", "년"]];
 const CANDLE_LABEL = { min: "5분봉", day: "일봉", week: "주봉", month: "월봉", year: "연봉" };
 let dlgTicker = null, dlgRange = "min", dlgTimer = null, dlgSeq = 0;
 let chartState = null, lastDetail = null;
