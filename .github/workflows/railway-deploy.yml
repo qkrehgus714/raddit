@@ -28,7 +28,7 @@ jobs:
             echo "env=skip" >> "$GITHUB_OUTPUT"
           fi
           CHANGED=$(git diff --name-only "$BASE" HEAD 2>/dev/null || git diff --name-only HEAD^ HEAD)
-          if echo "$CHANGED" | grep -qE '^raddit-next/|^\.github/'; then
+          if echo "$CHANGED" | grep -qE '^raddit-astro/|^\.github/'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"
@@ -40,7 +40,7 @@ jobs:
           fi
 
   deploy-web:
-    name: Deploy raddit-web (Next.js)
+    name: Deploy raddit-web (Astro)
     needs: detect-changes
     if: needs.detect-changes.outputs.web == 'true' && needs.detect-changes.outputs.env != 'skip'
     permissions:
@@ -62,7 +62,7 @@ jobs:
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: railway up --service ${{ steps.svc.outputs.name }} --project b764aecd-7591-4a63-b244-397c27b4f94d --environment ${{ needs.detect-changes.outputs.env }} --detach --yes
-        working-directory: raddit-next
+        working-directory: raddit-astro
 
   deploy-reddit:
     name: Deploy raddit-reddit (Python RPC)
