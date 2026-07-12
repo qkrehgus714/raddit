@@ -21,6 +21,7 @@ async function fetchReleases(): Promise<Release[]> {
         Accept: "application/vnd.github+json",
         "User-Agent": "raddit-astro",
       },
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) {
       throw new Error(`GitHub Releases 조회 실패: ${res.status}`);

@@ -570,7 +570,8 @@ export default function Dashboard() {
     document.body.classList.remove("modal-open");
   }
   function loadChangelog() {
-    const esc = (s: string) => String(s||"").replace(/[<>&"']/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;","\"":"&quot;","'":"&#39;"}[c]));
+    const escMap: Record<string, string> = {"<":"&lt;",">":"&gt;","&":"&amp;","\"":"&quot;","'":"&#39;"};
+    const esc = (s: string) => String(s||"").replace(/[<>&"']/g, c => escMap[c] ?? c);
     setClHtml('<div class="cl-loading">불러오는 중…</div>');
     fetch("/api/changelog").then(r => {
       if (!r.ok) throw new Error(String(r.status));
@@ -629,6 +630,10 @@ export default function Dashboard() {
     }
   }
 
+  function onDocClick(e: Event) {
+    if (!(e.target as HTMLElement).closest(".search")) setSearchDrop(false);
+  }
+
   function onResize() {
     if (lastDetail && dlgOpen()) drawChart(lastDetail);
   }
@@ -636,15 +641,10 @@ export default function Dashboard() {
   // ── 생명주기 ──
   onMount(() => {
     load();
-    // 버전
     fetch("/api/version").then(r => r.json()).then(d => { if (d.version) setVersion(`v${d.version}`); }).catch(() => {});
     document.addEventListener("keydown", onKeydown);
-    window.addEventListener("resize", onResize);
-  // W1 수정: 외부 클릭 리스너를 명명하여 onCleanup에서 제거 가능하게
-  const onDocClick = (e: Event) => {
-    if (!(e.target as HTMLElement).closest(".search")) setSearchDrop(false);
-  };
-  document.addEventListener("click", onDocClick);
+    document.addEventListener("click", onDocClick);
+    if (typeof window !== "undefined") window.addEventListener("resize", onResize);
   });
 
   onCleanup(() => {
@@ -728,7 +728,7 @@ export default function Dashboard() {
         <div class="tile">
           <div class="label">필터 통과</div>
           <div class="value">{tiles().rowsLen}<small>종목</small></div>
-          <div class="note">{tiles().maxPrice > "0" ? "$" + tiles().maxPrice + " 미만" : "가격 필터 없음"}</div>
+          <div class="note">{tiles().maxPrice > 0 ? "$" + tiles().maxPrice + " 미만" : "가격 필터 없음"}</div>
         </div>
         <div class="tile">
           <div class="label">오늘 최고 급등</div>

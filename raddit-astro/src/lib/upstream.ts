@@ -39,10 +39,11 @@ let yahooAuth: { cookie: string; crumb: string; expiresAt: number } | null = nul
 let yahooAuthPromise: Promise<{ cookie: string; crumb: string }> | null = null;
 
 async function bootstrapYahooAuth(): Promise<{ cookie: string; crumb: string }> {
-  const cookieRes = await fetch("https://fc.yahoo.com", { headers: { "User-Agent": BROWSER_UA } });
+  const cookieRes = await fetch("https://fc.yahoo.com", { headers: { "User-Agent": BROWSER_UA }, signal: AbortSignal.timeout(10000) });
   const cookie = cookieRes.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
   const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
     headers: { "User-Agent": BROWSER_UA, Cookie: cookie },
+    signal: AbortSignal.timeout(10000),
   });
   if (!crumbRes.ok) throw new Error(`Yahoo crumb 발급 실패 ${crumbRes.status}`);
   const crumb = await crumbRes.text();
