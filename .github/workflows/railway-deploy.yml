@@ -21,9 +21,11 @@ jobs:
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
             BASE="origin/dev"
             echo "env=production" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$GITHUB_REF" = "refs/heads/dev" ]; then
             BASE="HEAD^"
             echo "env=dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=skip" >> "$GITHUB_OUTPUT"
           fi
           CHANGED=$(git diff --name-only "$BASE" HEAD 2>/dev/null || git diff --name-only HEAD^ HEAD)
           if echo "$CHANGED" | grep -qE '^raddit-next/|^\.github/'; then
@@ -40,7 +42,9 @@ jobs:
   deploy-web:
     name: Deploy raddit-web (Next.js)
     needs: detect-changes
-    if: needs.detect-changes.outputs.web == 'true'
+    if: needs.detect-changes.outputs.web == 'true' && needs.detect-changes.outputs.env != 'skip'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +67,9 @@ jobs:
   deploy-reddit:
     name: Deploy raddit-reddit (Python RPC)
     needs: detect-changes
-    if: needs.detect-changes.outputs.reddit == 'true'
+    if: needs.detect-changes.outputs.reddit == 'true' && needs.detect-changes.outputs.env != 'skip'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
