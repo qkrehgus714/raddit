@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.astro/
+*.tsbuildinfo
+.env
+.env.local
