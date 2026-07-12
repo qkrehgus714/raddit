@@ -11,6 +11,7 @@ jobs:
     outputs:
       web: ${{ steps.check.outputs.web }}
       reddit: ${{ steps.check.outputs.reddit }}
+      env: ${{ steps.check.outputs.env }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,8 +20,12 @@ jobs:
         run: |
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
             BASE="origin/dev"
-          else
+            echo "env=production" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF" = "refs/heads/dev" ]; then
             BASE="HEAD^"
+            echo "env=dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=skip" >> "$GITHUB_OUTPUT"
           fi
           CHANGED=$(git diff --name-only "$BASE" HEAD 2>/dev/null || git diff --name-only HEAD^ HEAD)
           if echo "$CHANGED" | grep -qE '^raddit-next/|^\.github/'; then
@@ -37,29 +42,49 @@ jobs:
   deploy-web:
     name: Deploy raddit-web (Next.js)
     needs: detect-changes
-    if: needs.detect-changes.outputs.web == 'true'
+    if: needs.detect-changes.outputs.web == 'true' && needs.detect-changes.outputs.env != 'skip'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Railway CLI
         run: npm i -g @railway/cli@5
+      - name: Resolve service name
+        id: svc
+        run: |
+          if [ "${{ needs.detect-changes.outputs.env }}" = "production" ]; then
+            echo "name=raddit-web" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=raddit-web-dev" >> "$GITHUB_OUTPUT"
+          fi
       - name: Deploy raddit-web
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: railway up --service raddit-web --project b764aecd-7591-4a63-b244-397c27b4f94d --environment production --detach --yes
+        run: railway up --service ${{ steps.svc.outputs.name }} --project b764aecd-7591-4a63-b244-397c27b4f94d --environment ${{ needs.detect-changes.outputs.env }} --detach --yes
         working-directory: raddit-next
 
   deploy-reddit:
     name: Deploy raddit-reddit (Python RPC)
     needs: detect-changes
-    if: needs.detect-changes.outputs.reddit == 'true'
+    if: needs.detect-changes.outputs.reddit == 'true' && needs.detect-changes.outputs.env != 'skip'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Railway CLI
         run: npm i -g @railway/cli@5
+      - name: Resolve service name
+        id: svc
+        run: |
+          if [ "${{ needs.detect-changes.outputs.env }}" = "production" ]; then
+            echo "name=raddit-reddit" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=raddit-reddit-dev" >> "$GITHUB_OUTPUT"
+          fi
       - name: Deploy raddit-reddit
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: railway up --service raddit-reddit --project b764aecd-7591-4a63-b244-397c27b4f94d --environment production --detach --yes
+        run: railway up --service ${{ steps.svc.outputs.name }} --project b764aecd-7591-4a63-b244-397c27b4f94d --environment ${{ needs.detect-changes.outputs.env }} --detach --yes
         working-directory: raddit-reddit
