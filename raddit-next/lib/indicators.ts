@@ -1,9 +1,15 @@
 /** 기술 지표 계산. */
 
-// 차트 범위별 봉 간격 (Yahoo Finance chart API 파라미터)
-// 캔들이 읽히려면 화면에 봉이 너무 많으면 안 됨 — 1일은 15분봉(~64개), 5일은 1시간봉(~33개)
-export const RANGE_INTERVAL: Record<string, string> = {
-  "1d": "15m", "5d": "60m", "1mo": "1d", "6mo": "1d", "1y": "1d",
+// 차트 탭은 봉 간격 기준(분·일·주·월·년) — 국내 증권 앱 관례 (#18).
+// key가 API의 range 파라미터 값이고, 각 탭의 조회 구간(range)은 고정폭 캔버스에서
+// 캔들이 읽히는 봉 수(~120–260개)가 되도록 잡았다.
+export interface RangeSpec { range: string; interval: string; }
+export const RANGE_SPEC: Record<string, RangeSpec> = {
+  min:   { range: "1d",  interval: "5m"  }, // 당일 5분봉 (프리·애프터 포함 ~192봉)
+  day:   { range: "6mo", interval: "1d"  }, // 6개월 일봉 (~124봉)
+  week:  { range: "5y",  interval: "1wk" }, // 5년 주봉 (~260봉)
+  month: { range: "10y", interval: "1mo" }, // 10년 월봉 (~120봉)
+  year:  { range: "max", interval: "1mo" }, // 전체 월봉 → 서버에서 연봉으로 집계
 };
 
 export interface Point {

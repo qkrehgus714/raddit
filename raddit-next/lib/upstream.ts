@@ -6,7 +6,7 @@
  * 두드리지 않는다. revalidate 값은 서비스 레이어의 TTL보다 약간 짧게 잡아
  * 메모리 캐시가 만료됐을 때 신선한 값을 받아오게 한다.
  */
-import { Point, RANGE_INTERVAL } from "./indicators";
+import { Point, RANGE_SPEC } from "./indicators";
 
 const APEWISDOM_URL = (filter: string, page: number) =>
   `https://apewisdom.io/api/v1.0/filter/${filter}/page/${page}`;
@@ -105,13 +105,13 @@ export interface ChartData { meta: Record<string, any>; points: Point[]; }
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4;
 
 /**
- * 지정 범위의 시세 시계열. 1일 차트는 프리·애프터마켓 포함 (페니주식은 장외 급등락이 잦음).
+ * 지정 범위·간격의 시세 시계열 원본 조회.
  * 시가·고가·저가가 비어 있는 봉은 종가로 채워 캔들 표시가 끊기지 않게 한다.
  */
-export async function fetchChart(ticker: string, rng: string): Promise<ChartData> {
-  const prepost = rng === "1d" ? "true" : "false";
-  const url = `${YAHOO_URL(ticker)}?range=${rng}&interval=${RANGE_INTERVAL[rng]}&includePrePost=${prepost}`;
-  const revalidate = rng === "1d" ? 55 : rng === "1y" ? 590 : 290;
+async function fetchChartRaw(
+  ticker: string, range: string, interval: string, prepost: boolean, revalidate: number,
+): Promise<ChartData> {
+  const url = `${YAHOO_URL(ticker)}?range=${range}&interval=${interval}&includePrePost=${prepost}`;
   const result = (await getJson(url, revalidate)).chart.result[0];
   const quote = result.indicators.quote[0];
   const ts: number[] = result.timestamp ?? [];
@@ -134,6 +134,45 @@ export async function fetchChart(ticker: string, rng: string): Promise<ChartData
     });
   }
   return { meta: result.meta, points };
+}
+
+/** 월봉 시계열을 연도 단위 연봉으로 집계 (Yahoo에 1y interval이 없음). */
+function aggregateYearly(monthly: Point[]): Point[] {
+  const out: Point[] = [];
+  let cur: Point | null = null;
+  let curYear = -1;
+  for (const p of monthly) {
+    const yr = new Date(p.t * 1000).getUTCFullYear();
+    if (!cur || yr !== curYear) {
+      if (cur) out.push(cur);
+      curYear = yr;
+      cur = { ...p };
+    } else {
+      cur.h = Math.max(cur.h, p.h);
+      cur.l = Math.min(cur.l, p.l);
+      cur.c = p.c;
+      cur.v = cur.v == null && p.v == null ? null : (cur.v ?? 0) + (p.v ?? 0);
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/**
+ * 탭(봉 간격) 기준 시세 시계열 (#18).
+ * 분 탭은 프리·애프터마켓 포함 (페니주식은 장외 급등락이 잦음),
+ * 년 탭은 전체 월봉을 받아 연봉으로 집계해 돌려준다.
+ */
+export async function fetchChart(ticker: string, rng: string): Promise<ChartData> {
+  const spec = RANGE_SPEC[rng];
+  const revalidate = rng === "min" ? 55 : rng === "day" ? 290 : 590;
+  const chart = await fetchChartRaw(ticker, spec.range, spec.interval, rng === "min", revalidate);
+  return rng === "year" ? { meta: chart.meta, points: aggregateYearly(chart.points) } : chart;
+}
+
+/** 기술 지표 분석용 1년 일봉 — 탭 범위와 무관한 내부 전용 조회. */
+export function fetchDailyChart(ticker: string): Promise<ChartData> {
+  return fetchChartRaw(ticker, "1y", "1d", false, 590);
 }
 
 export interface RedditPost { title: string; url: string | null; subreddit: string | null; ts: number | null; }
