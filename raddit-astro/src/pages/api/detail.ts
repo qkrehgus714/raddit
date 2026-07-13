@@ -1,10 +1,10 @@
-import { NextRequest } from "next/server";
+import type { APIRoute } from "astro";
 import { RANGE_SPEC } from "@/lib/indicators";
 import { detailTtlSec, getDetail } from "@/lib/services";
 import { TICKER_RE, errMsg, jsonCached, jsonError } from "@/lib/respond";
 
-export async function GET(req: NextRequest) {
-  const sp = req.nextUrl.searchParams;
+export const GET: APIRoute = async ({ url }) => {
+  const sp = url.searchParams;
   const ticker = (sp.get("ticker") ?? "").toUpperCase();
   const rng = sp.get("range") ?? "min";
   if (!TICKER_RE.test(ticker)) return jsonError("잘못된 티커입니다.", 400);
@@ -15,4 +15,4 @@ export async function GET(req: NextRequest) {
   } catch (exc) {
     return jsonError(`차트 데이터 수집 실패: ${errMsg(exc)}`, 502);
   }
-}
+};

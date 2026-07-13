@@ -32,7 +32,10 @@ $5 미만 페니주식만 선별해 보여주는 대시보드입니다.
 
 ## 🚀 지금 사용하기
 
-**👉 [raddit 워치보드 바로가기](https://raddit-web-production.up.railway.app)**
+| 환경 | 주소 |
+|------|------|
+| **운영(Production)** | **👉 [raddit 워치보드](https://raddit-web-production.up.railway.app)** |
+| 개발(Dev) | 🔧 [raddit 개발 버전](https://raddit-web-dev-dev.up.railway.app) |
 
 > 별도 설치나 가입 없이 브라우저에서 바로 이용할 수 있습니다.
 
@@ -50,7 +53,7 @@ $5 미만 페니주식만 선별해 보여주는 대시보드입니다.
 
 ```
 raddit/
-├── raddit-next/       # 웹 대시보드 (메인 서비스)
+├── raddit-astro/     # 웹 대시보드 (메인 서비스)
 ├── raddit-reddit/     # 게시물 수집 서비스
 ├── .github/workflows/ # 자동 배포
 └── CONTRIBUTING.md    # 기여 가이드라인

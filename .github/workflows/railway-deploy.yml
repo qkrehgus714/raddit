@@ -11,19 +11,24 @@ jobs:
     outputs:
       web: ${{ steps.check.outputs.web }}
       reddit: ${{ steps.check.outputs.reddit }}
+      env: ${{ steps.check.outputs.env }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - id: check
         run: |
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
             BASE="origin/dev"
-          else
+            echo "env=production" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF" = "refs/heads/dev" ]; then
             BASE="HEAD^"
+            echo "env=dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=skip" >> "$GITHUB_OUTPUT"
           fi
           CHANGED=$(git diff --name-only "$BASE" HEAD 2>/dev/null || git diff --name-only HEAD^ HEAD)
-          if echo "$CHANGED" | grep -qE '^raddit-next/|^\.github/'; then
+          if echo "$CHANGED" | grep -qE '^raddit-astro/|^\.github/'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"
@@ -35,31 +40,107 @@ jobs:
           fi
 
   deploy-web:
-    name: Deploy raddit-web (Next.js)
+    name: Deploy raddit-web (Astro)
     needs: detect-changes
-    if: needs.detect-changes.outputs.web == 'true'
+    if: needs.detect-changes.outputs.web == 'true' && needs.detect-changes.outputs.env != 'skip'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-web-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Resolve version and tag
+        id: version
+        working-directory: raddit-astro
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          SHA=$(git rev-parse --short HEAD)
+
+          if [ "${{ needs.detect-changes.outputs.env }}" = "production" ]; then
+            # prod: 가장 최근 release 태그(x.y.z만)에서 minor 증가
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "v0.0.0")
+            LATEST=${LATEST:-v0.0.0}
+            LATEST_BASE=${LATEST#v}
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_BASE"
+            NEW_TAG="v${MAJOR}.$((MINOR + 1)).0"
+            # 중복 가드
+            if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
+              echo "Tag ${NEW_TAG} already exists, reusing"
+              VERSION="${NEW_TAG#v}"
+            else
+              git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+              git push origin "$NEW_TAG"
+              VERSION="${NEW_TAG#v}"
+            fi
+          else
+            # dev: 가장 최근 release 태그(x.y.z만)로부터 커밋 수 + SHA
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "v0.0.0")
+            LATEST=${LATEST:-v0.0.0}
+            TAG_BASE=${LATEST#v}
+            COMMITS_AHEAD=$(git rev-list --count "${LATEST}..HEAD" 2>/dev/null || echo "0")
+            if [ "$COMMITS_AHEAD" -eq 0 ]; then
+              VERSION="${TAG_BASE}"
+            else
+              VERSION="${TAG_BASE}-dev.${COMMITS_AHEAD}.${SHA}"
+            fi
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          npm version "${VERSION}" --no-git-tag-version
+          echo "Resolved version: ${VERSION}"
+
       - name: Install Railway CLI
         run: npm i -g @railway/cli@5
+      - name: Resolve service name
+        id: svc
+        run: |
+          if [ "${{ needs.detect-changes.outputs.env }}" = "production" ]; then
+            echo "name=raddit-web" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=raddit-web-dev" >> "$GITHUB_OUTPUT"
+          fi
       - name: Deploy raddit-web
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: railway up --service raddit-web --project b764aecd-7591-4a63-b244-397c27b4f94d --environment production --detach --yes
-        working-directory: raddit-next
+        run: railway up --service ${{ steps.svc.outputs.name }} --project b764aecd-7591-4a63-b244-397c27b4f94d --environment ${{ needs.detect-changes.outputs.env }} --detach --yes
+        working-directory: raddit-astro
 
   deploy-reddit:
     name: Deploy raddit-reddit (Python RPC)
     needs: detect-changes
-    if: needs.detect-changes.outputs.reddit == 'true'
+    if: needs.detect-changes.outputs.reddit == 'true' && needs.detect-changes.outputs.env != 'skip'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-reddit-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Install Railway CLI
         run: npm i -g @railway/cli@5
+      - name: Resolve service name
+        id: svc
+        run: |
+          if [ "${{ needs.detect-changes.outputs.env }}" = "production" ]; then
+            echo "name=raddit-reddit" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=raddit-reddit-dev" >> "$GITHUB_OUTPUT"
+          fi
       - name: Deploy raddit-reddit
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: railway up --service raddit-reddit --project b764aecd-7591-4a63-b244-397c27b4f94d --environment production --detach --yes
+        run: railway up --service ${{ steps.svc.outputs.name }} --project b764aecd-7591-4a63-b244-397c27b4f94d --environment ${{ needs.detect-changes.outputs.env }} --detach --yes
         working-directory: raddit-reddit
