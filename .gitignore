@@ -1,3 +1,12 @@
 __pycache__/
 *.pyc
 .claude/
+
+# raddit-next is deprecated, keep local copy only
+raddit-next/
+
+# build artifacts
+raddit-astro/dist/
+raddit-astro/.astro/
+raddit-astro/node_modules/
+raddit-reddit/__pycache__/
