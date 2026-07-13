@@ -130,7 +130,10 @@ export default function Dashboard() {
       const res = await fetch(`/api/data?filter=${encodeURIComponent(filterVal())}&max_price=${priceVal()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.status);
-      const filtered = data.items.filter((d: Row) => !FALSE_POSITIVE.has(d.ticker)).map((d: Row) => ({
+      const filtered = data.items.filter((d: Row) =>
+        // FALSE_POSITIVE(일반 단어·약어 충돌)는 제외하되, 실제 $5 미만 주식으로 확인된 티커는 보존
+        !FALSE_POSITIVE.has(d.ticker) || (d.quote && d.quote.price != null && d.quote.price < 5)
+      ).map((d: Row) => ({
         ...d,
         price: d.quote ? d.quote.price : null,
         chg: d.quote ? d.quote.day_change_pct : null,
