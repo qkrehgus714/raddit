@@ -85,23 +85,50 @@ export interface Quote {
   price: number;
   day_change_pct: number | null;
   volume: number | null;
+  type?: string | null;
+  exchange?: string | null;
 }
 
-export async function fetchQuote(ticker: string): Promise<Quote | null> {
-  try {
-    const data = await getJson(YAHOO_URL(ticker));
-    const meta = data.chart.result[0].meta;
-    const price = meta.regularMarketPrice;
-    const prev = meta.previousClose || meta.chartPreviousClose;
-    if (price == null) return null;
-    return {
-      price,
-      day_change_pct: prev ? ((price - prev) / prev) * 100 : null,
-      volume: meta.regularMarketVolume ?? null,
-    };
-  } catch {
-    return null;
-  }
+/**
+ * Yahoo spark 배치 API로 여러 티커의 시세를 한 번에 조회 (비인증, chunkSize 심볼/요청).
+ * v8/chart per-ticker 대비 요청 수를 chunkSize 배 절감. 청크 단위 실패는 해당 청크만 skip.
+ */
+const SPARK_URL = (symbols: string) =>
+  `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbols)}&range=1d&interval=1d`;
+
+export async function attachQuotesBatch(items: MentionItem[], chunkSize = 20, concurrency = 5): Promise<void> {
+  const chunks: MentionItem[][] = [];
+  for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const chunk = chunks[next++];
+      try {
+        const data = await getJson(SPARK_URL(chunk.map(c => c.ticker).join(",")));
+        const metaByTicker = new Map<string, any>();
+        for (const r of data?.spark?.result ?? []) {
+          const meta = r.response?.[0]?.meta;
+          if (meta?.regularMarketPrice != null) metaByTicker.set(r.symbol, meta);
+        }
+        for (const c of chunk) {
+          const meta = metaByTicker.get(c.ticker);
+          if (!meta) continue;
+          const price = meta.regularMarketPrice;
+          const prev = meta.chartPreviousClose ?? meta.previousClose;
+          c.quote = {
+            price,
+            day_change_pct: prev ? ((price - prev) / prev) * 100 : null,
+            volume: meta.regularMarketVolume ?? null,
+            type: meta.instrumentType ?? null,
+            exchange: meta.exchangeName ?? null,
+          };
+        }
+      } catch {
+        // 청크 실패(레이트리밋 등) 시 해당 청크만 skip
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
 export interface BidAsk {
@@ -145,17 +172,6 @@ export async function fetchBidAsk(ticker: string, retry = true): Promise<BidAsk 
   }
 }
 
-export async function attachQuotes(items: MentionItem[], concurrency = 10): Promise<void> {
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        items[i].quote = await fetchQuote(items[i].ticker);
-      }
-    }),
-  );
-}
 
 export interface ChartData { meta: Record<string, any>; points: Point[]; }
 

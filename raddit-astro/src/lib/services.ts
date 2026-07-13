@@ -6,7 +6,6 @@ import { analyze, computeOverlays } from "./indicators";
 import type { Point, Analysis, OverlayRow } from "./indicators";
 import * as up from "./upstream";
 
-const PRICE_LOOKUP_LIMIT = 120;
 
 // 파이썬 버전과 동일한 TTL (밀리초). 두 번째 인자는 stale 허용 구간.
 const dataCache = new TtlCache<DataPayload>(120_000, 240_000);
@@ -35,11 +34,25 @@ export async function getData(
   const key = `${filterName}|${maxPrice}|${minMentions}`;
   return dataCache.getOrCompute(key, async () => {
     const all = (await up.fetchMentions(filterName)).filter(it => it.mentions >= minMentions);
-    const candidates = all.slice(0, PRICE_LOOKUP_LIMIT);
-    await up.attachQuotes(candidates);
-    const items = maxPrice > 0
-      ? candidates.filter(it => it.quote && it.quote.price < maxPrice)
-      : candidates;
+    // 전수 batch 가격조회 (상위 N slice 제거 — 페니주식이 멘션 하위권에 묻혀 누락되는 문제 방지)
+    await up.attachQuotesBatch(all);
+    // Yahoo 대량 실패(429 등) 시 빈 결과가 캐시를 덮어쓰는 것을 방지 — 누락률이 비정상적으로
+    // 높으면 throw하여 TtlCache의 stale-if-error가 직전 정상 스냅샷을 서빙하게 함
+    if (all.length > 10) {
+      const withQuote = all.filter(it => it.quote && it.quote.price != null).length;
+      if (withQuote / all.length < 0.3) {
+        throw new Error(`시세 조회 대량 실패 (quote ${withQuote}/${all.length}) — Yahoo 레이트리밋 의심`);
+      }
+    }
+    const items = all.filter(it => {
+      if (!it.quote || it.quote.price == null) return false;
+      if (maxPrice > 0) {
+        if (it.quote.price >= maxPrice) return false;
+        // 페니모드: 실제 주식(EQUITY)만 — 레버리지 ETF(SOXS·MSOS 등) 노이즈 제외
+        if (it.quote.type && it.quote.type !== "EQUITY") return false;
+      }
+      return true;
+    });
     return {
       generated_at: kstDateTime(),
       filter: filterName,
