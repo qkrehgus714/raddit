@@ -96,33 +96,39 @@ export interface Quote {
 const SPARK_URL = (symbols: string) =>
   `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbols)}&range=1d&interval=1d`;
 
-export async function attachQuotesBatch(items: MentionItem[], chunkSize = 20): Promise<void> {
-  for (let i = 0; i < items.length; i += chunkSize) {
-    const chunk = items.slice(i, i + chunkSize);
-    try {
-      const data = await getJson(SPARK_URL(chunk.map(c => c.ticker).join(",")));
-      const metaByTicker = new Map<string, any>();
-      for (const r of data?.spark?.result ?? []) {
-        const meta = r.response?.[0]?.meta;
-        if (meta?.regularMarketPrice != null) metaByTicker.set(r.symbol, meta);
+export async function attachQuotesBatch(items: MentionItem[], chunkSize = 20, concurrency = 5): Promise<void> {
+  const chunks: MentionItem[][] = [];
+  for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const chunk = chunks[next++];
+      try {
+        const data = await getJson(SPARK_URL(chunk.map(c => c.ticker).join(",")));
+        const metaByTicker = new Map<string, any>();
+        for (const r of data?.spark?.result ?? []) {
+          const meta = r.response?.[0]?.meta;
+          if (meta?.regularMarketPrice != null) metaByTicker.set(r.symbol, meta);
+        }
+        for (const c of chunk) {
+          const meta = metaByTicker.get(c.ticker);
+          if (!meta) continue;
+          const price = meta.regularMarketPrice;
+          const prev = meta.chartPreviousClose ?? meta.previousClose;
+          c.quote = {
+            price,
+            day_change_pct: prev ? ((price - prev) / prev) * 100 : null,
+            volume: meta.regularMarketVolume ?? null,
+            type: meta.instrumentType ?? null,
+            exchange: meta.exchangeName ?? null,
+          };
+        }
+      } catch {
+        // 청크 실패(레이트리밋 등) 시 해당 청크만 skip
       }
-      for (const c of chunk) {
-        const meta = metaByTicker.get(c.ticker);
-        if (!meta) continue;
-        const price = meta.regularMarketPrice;
-        const prev = meta.chartPreviousClose ?? meta.previousClose;
-        c.quote = {
-          price,
-          day_change_pct: prev ? ((price - prev) / prev) * 100 : null,
-          volume: meta.regularMarketVolume ?? null,
-          type: meta.instrumentType ?? null,
-          exchange: meta.exchangeName ?? null,
-        };
-      }
-    } catch {
-      // 청크 실패(레이트리밋 등) 시 해당 청크는 quote 없음 → 후단에서 제외
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
 export interface BidAsk {

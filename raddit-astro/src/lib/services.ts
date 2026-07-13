@@ -36,6 +36,14 @@ export async function getData(
     const all = (await up.fetchMentions(filterName)).filter(it => it.mentions >= minMentions);
     // 전수 batch 가격조회 (상위 N slice 제거 — 페니주식이 멘션 하위권에 묻혀 누락되는 문제 방지)
     await up.attachQuotesBatch(all);
+    // Yahoo 대량 실패(429 등) 시 빈 결과가 캐시를 덮어쓰는 것을 방지 — 누락률이 비정상적으로
+    // 높으면 throw하여 TtlCache의 stale-if-error가 직전 정상 스냅샷을 서빙하게 함
+    if (all.length > 10) {
+      const withQuote = all.filter(it => it.quote && it.quote.price != null).length;
+      if (withQuote / all.length < 0.3) {
+        throw new Error(`시세 조회 대량 실패 (quote ${withQuote}/${all.length}) — Yahoo 레이트리밋 의심`);
+      }
+    }
     const items = all.filter(it => {
       if (!it.quote || it.quote.price == null) return false;
       if (maxPrice > 0) {
