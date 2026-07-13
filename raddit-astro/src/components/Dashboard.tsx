@@ -185,6 +185,7 @@ export default function Dashboard() {
   let currentTipFmt: Intl.DateTimeFormat = new Intl.DateTimeFormat("ko-KR", { timeZone: KST_TZ });
   let baselineLine: IPriceLine | null = null;
   let mqListener: ((e: MediaQueryListEvent) => void) | null = null;
+  let lastChartData: any = null;
 
   function applyTheme() {
     if (!chart) return;
@@ -194,6 +195,7 @@ export default function Dashboard() {
       grid: { vertLines: { color: line }, horzLines: { color: line } },
       rightPriceScale: { borderColor: line },
       timeScale: { borderColor: line },
+      crosshair: { vertLine: { color: ink3, labelBackgroundColor: card }, horzLine: { color: ink3, labelBackgroundColor: card } },
     });
     const up = cssVar("--up"), down = cssVar("--down");
     candleSeries?.applyOptions({ upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down });
@@ -245,6 +247,7 @@ export default function Dashboard() {
 
   function clearChart(msg?: string) {
     hideTip();
+    lastChartData = null;
     candleSeries?.setData([]);
     volSeries?.setData([]);
     ma20Series?.setData([]);
@@ -353,6 +356,7 @@ export default function Dashboard() {
       price: baseline, color: cssVar("--ink-3"), lineStyle: LineStyle.Dashed, lineWidth: 1,
       axisLabelVisible: true, title: isMin && data.prev_close ? "전일종가" : "",
     });
+    lastChartData = data;
 
     chart.timeScale().fitContent();
 
@@ -587,7 +591,7 @@ export default function Dashboard() {
     document.addEventListener("click", onDocClick);
     if (typeof window !== "undefined" && window.matchMedia) {
       const mq = window.matchMedia("(prefers-color-scheme: dark)");
-      mqListener = () => applyTheme();
+      mqListener = () => { applyTheme(); if (lastChartData) drawChart(lastChartData); };
       mq.addEventListener("change", mqListener);
     }
   });
