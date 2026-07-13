@@ -399,6 +399,7 @@ export default function Dashboard() {
   function closeDetail() {
     setDlgTicker(""); dlgSeq++;
     clearTimeout(dlgTimer!); dlgTimer = null;
+    lastChartData = null;
     hideTip();
     setDlgOpen(false);
     document.body.classList.remove("modal-open");
