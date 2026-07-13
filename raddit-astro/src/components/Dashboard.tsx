@@ -189,6 +189,7 @@ export default function Dashboard() {
   let baselineLine: IPriceLine | null = null;
   let mqListener: ((e: MediaQueryListEvent) => void) | null = null;
   let lastChartData: any = null;
+  let lastRange: string | null = null;
 
   function applyTheme() {
     if (!chart) return;
@@ -252,6 +253,7 @@ export default function Dashboard() {
 
   function clearChart(msg?: string) {
     hideTip();
+    lastRange = null;
     lastChartData = null;
     candleSeries?.setData([]);
     volSeries?.setData([]);
@@ -307,6 +309,10 @@ export default function Dashboard() {
   function drawChart(data: any) {
     ensureChart();
     if (!chart || !candleSeries) return;
+    // 레인지(봉 단위) 변경 시 가격 스케일 autoScale 재활성화 — 사용자가 수동으로
+    // 가격축을 줌/드래그해 autoScale이 꺼진 상태라도 새 데이터에 맞춰 세로 리핏.
+    // (동일 레인지 60초 자동갱신에선 사용자 줌을 존중해 건드리지 않음)
+    if (data.range !== lastRange) { candleSeries.priceScale().applyOptions({ autoScale: true }); lastRange = data.range; }
     applyTheme();
     hideTip();
     setChartMsg("");
