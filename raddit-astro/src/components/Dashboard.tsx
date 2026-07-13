@@ -231,7 +231,9 @@ export default function Dashboard() {
     });
     volSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", color: cssVar("--bar") });
     chart.priceScale("").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-    const lineOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false } as const;
+    // 오버레이(MA/BB)는 가격 스케일 자동범위 산정에서 제외 — 캔들 데이터만으로 Y축을 정해
+    // 넓은 BB 밴드가 캔들을 찌그러뜨리는 것을 방지 (구 Canvas 차트와 동일 동작: 오버레이는 clip)
+    const lineOpts: any = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null };
     ma20Series = chart.addSeries(LineSeries, { color: cssVar("--accent"), lineWidth: 2, ...lineOpts });
     ma50Series = chart.addSeries(LineSeries, { color: cssVar("--ma-slow"), lineWidth: 2, lineStyle: LineStyle.Dotted, ...lineOpts });
     bbUpSeries = chart.addSeries(LineSeries, { color: ink3, lineWidth: 1, ...lineOpts });
