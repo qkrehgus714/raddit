@@ -3,6 +3,7 @@
 import { createSignal, onMount, onCleanup, createMemo, Show, For } from "solid-js";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter } from "lightweight-charts";
+import { SessionBandsPrimitive, computeIntradaySessions } from "../lib/sessionBands";
 
 // ── 상수 ──
 const FALSE_POSITIVE = new Set(["EU","IQ","RR","LINK","DC","API","LOT","ALL","PR","MA","D","ES","GL","IP","CAT","MU","ON","SO","IT","GO","AN","BE"]);
@@ -111,6 +112,7 @@ export default function Dashboard() {
   let chartContainerRef: HTMLDivElement | undefined;
   let chart: IChartApi | null = null;
   let candleSeries: ISeriesApi<"Candlestick"> | null = null;
+  let sessionBands: SessionBandsPrimitive | null = null;
   let volSeries: ISeriesApi<"Histogram"> | null = null;
   let ma20Series: ISeriesApi<"Line"> | null = null;
   let ma50Series: ISeriesApi<"Line"> | null = null;
@@ -237,6 +239,8 @@ export default function Dashboard() {
     candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
     });
+    sessionBands = new SessionBandsPrimitive(cssVar("--session-tint"));
+    candleSeries.attachPrimitive(sessionBands);
     volSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", color: cssVar("--bar") });
     chart.priceScale("").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     // 오버레이(MA/BB)는 가격 스케일 자동범위 산정에서 제외 — 캔들 데이터만으로 Y축을 정해
@@ -253,6 +257,7 @@ export default function Dashboard() {
     if (chart) { chart.remove(); chart = null; }
     candleSeries = volSeries = ma20Series = ma50Series = bbUpSeries = bbLowSeries = null;
     baselineLine = null;
+    sessionBands = null;
   }
 
   function clearChart(msg?: string) {
@@ -372,6 +377,13 @@ export default function Dashboard() {
       axisLabelVisible: true, title: isMin && data.prev_close ? "전일종가" : "",
     });
     lastChartData = data;
+
+    // 이슈 #48: 분봉(min) 일 때만 미국 프리/애프터마켓 세션 음영
+    if (isMin && pts.length) {
+      sessionBands?.setSessions(computeIntradaySessions(pts[0].t, pts[pts.length - 1].t));
+    } else {
+      sessionBands?.setSessions([]);
+    }
 
     chart.timeScale().fitContent();
 
