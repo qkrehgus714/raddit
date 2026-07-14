@@ -68,6 +68,7 @@ export interface MentionItem {
   mentions_24h_ago?: number;
   quote?: Quote | null;
   buy_ratio_pct?: number | null;
+  bidAskTotal?: number | null;
 }
 
 export async function fetchMentions(filter: string): Promise<MentionItem[]> {
@@ -185,6 +186,23 @@ export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, co
   } catch {
     return;
   }
+  const fetchChunk = (chunk: MentionItem[], a: { cookie: string; crumb: string }) =>
+    fetch(`${YAHOO_QUOTE_URL(chunk.map(c => c.ticker).join(","))}&crumb=${encodeURIComponent(a.crumb)}`, {
+      headers: { "User-Agent": BROWSER_UA, Cookie: a.cookie },
+      signal: AbortSignal.timeout(10000),
+    });
+  const applyChunk = (chunk: MentionItem[], data: any) => {
+    const byTicker = new Map<string, any>();
+    for (const q of data?.quoteResponse?.result ?? []) byTicker.set(q.symbol, q);
+    for (const c of chunk) {
+      const q = byTicker.get(c.ticker);
+      if (!q) continue;
+      const ba = parseBidAsk(q);
+      c.buy_ratio_pct = ba.buy_ratio_pct;
+      const total = (ba.bid_size ?? 0) + (ba.ask_size ?? 0);
+      c.bidAskTotal = total > 0 ? total : null;
+    }
+  };
   const chunks: MentionItem[][] = [];
   for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
   let next = 0;
@@ -192,16 +210,14 @@ export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, co
     while (next < chunks.length) {
       const chunk = chunks[next++];
       try {
-        const url = `${YAHOO_QUOTE_URL(chunk.map(c => c.ticker).join(","))}&crumb=${encodeURIComponent(auth.crumb)}`;
-        const res = await fetch(url, { headers: { "User-Agent": BROWSER_UA, Cookie: auth.cookie }, signal: AbortSignal.timeout(10000) });
-        if (!res.ok) continue;
-        const data = await res.json();
-        const byTicker = new Map<string, any>();
-        for (const q of data?.quoteResponse?.result ?? []) byTicker.set(q.symbol, q);
-        for (const c of chunk) {
-          const q = byTicker.get(c.ticker);
-          if (q) c.buy_ratio_pct = parseBidAsk(q).buy_ratio_pct;
+        let res = await fetchChunk(chunk, auth);
+        // crumb 조기 만료(401/403) 시 재발급 후 1회 재시도 — fetchBidAsk(단일)와 동일 패턴
+        if (res.status === 401 || res.status === 403) {
+          yahooAuth = null;
+          try { auth = await getYahooAuth(); res = await fetchChunk(chunk, auth); } catch { continue; }
         }
+        if (!res.ok) continue;
+        applyChunk(chunk, await res.json());
       } catch {
         // 청크 실패 시 해당 청크 호가 null
       }

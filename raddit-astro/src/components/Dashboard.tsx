@@ -141,6 +141,7 @@ export default function Dashboard() {
         chg: d.quote ? d.quote.day_change_pct : null,
         vol: d.quote ? d.quote.volume : null,
         bidAskPct: d.buy_ratio_pct ?? null,
+        bidAskTotal: d.bidAskTotal ?? null,
       }));
       setRows(filtered);
       setScanned(data.scanned);
@@ -769,7 +770,7 @@ export default function Dashboard() {
                       <td>{d.price != null ? "$" + d.price.toFixed(2) : "-"}</td>
                       <td innerHTML={chgHtml}></td>
                       <td>{d.bidAskPct != null ? (
-                        <div class="bidask-cell">
+                        <div class="bidask-cell" classList={{ thin: (d.bidAskTotal ?? 0) < 100 }} title={(d.bidAskTotal ?? 0) < 100 ? "호가잔량 얕음 — 참고용" : `매수 ${d.bidAskPct!.toFixed(0)}% · 매도 ${(100 - d.bidAskPct!).toFixed(0)}%`}>
                           <div class="bidask-bar"><div class="bidask-buy" style={{ width: `${d.bidAskPct}%` }}></div></div>
                           <span class="bidask-num">{d.bidAskPct.toFixed(0)}</span>
                         </div>
