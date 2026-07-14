@@ -95,6 +95,8 @@ export default function Dashboard() {
   const [redditEmpty, setRedditEmpty] = createSignal("");
   const [newsPosts, setNewsPosts] = createSignal<{title:string;publisher?:string;url?:string;ts?:number}[]>([]);
   const [newsEmpty, setNewsEmpty] = createSignal("");
+  const [stSent, setStSent] = createSignal<{bullish_pct:number|null; messages:{body:string;username:string;ts:number|null;sentiment:string|null}[]; total:number; tagged:number} | null>(null);
+  const [stEmpty, setStEmpty] = createSignal("");
 
   // Changelog
   const [clOpen, setClOpen] = createSignal(false);
@@ -472,6 +474,7 @@ export default function Dashboard() {
   async function loadPosts(ticker: string) {
     setRedditPosts([]); setRedditEmpty("불러오는 중…");
     setNewsPosts([]); setNewsEmpty("불러오는 중…");
+    setStSent(null); setStEmpty("");
     try {
       const res = await fetch(`/api/posts?ticker=${encodeURIComponent(ticker)}`);
       const data = await res.json();
@@ -481,10 +484,13 @@ export default function Dashboard() {
       setRedditEmpty(data.reddit_error ? "레딧 불러오기 실패 (잠시 후 다시 시도해 주세요)" : "최근 1개월 내 관련 게시물이 없습니다");
       setNewsPosts(data.news || []);
       setNewsEmpty(data.news_error ? "뉴스 불러오기 실패" : "관련 뉴스가 없습니다");
+      setStSent(data.stocktwits || null);
+      setStEmpty(data.st_error ? "StockTwits 불러오기 실패" : (data.stocktwits ? "" : "StockTwits 데이터 없음"));
     } catch (err: any) {
       if (dlgTicker() !== ticker) return;
       setRedditPosts([]); setRedditEmpty("불러오기 실패: " + err.message);
       setNewsPosts([]); setNewsEmpty("불러오기 실패: " + err.message);
+      setStSent(null); setStEmpty("불러오기 실패: " + err.message);
     }
   }
 
@@ -838,6 +844,22 @@ export default function Dashboard() {
               <div class="bidask-bar"><div class="bidask-buy" style={{ width: `${bidAskPct()}%` }}></div></div>
               <div class="bidask-label">호가 잔량 매수 {bidAskPct()!.toFixed(0)}% · 매도 {(100 - bidAskPct()!).toFixed(0)}%</div>
             </div>
+          </Show>
+          <Show when={stSent()} fallback={<Show when={stEmpty()}><p class="dlg-status">{stEmpty()}</p></Show>}>
+            <h3 class="dlg-sub">StockTwits 여론 <Show when={stSent()!.tagged > 0}><span class="sent-note">{stSent()!.bullish_pct!.toFixed(0)}% 매수 · {(100 - stSent()!.bullish_pct!).toFixed(0)}% 매도 (태그 {stSent()!.tagged}건)</span></Show></h3>
+            <Show when={(stSent()!.tagged ?? 0) > 0}>
+              <div class="sent-bar"><div class="sent-bull" style={{ width: `${stSent()!.bullish_pct}%` }}></div></div>
+            </Show>
+            <Show when={stSent()!.messages.length} fallback={<p class="dlg-status">최근 메시지가 없습니다</p>}>
+              <ul class="post-list">
+                <For each={stSent()!.messages}>{(m) => (
+                  <li>
+                    <span class="st-body">{m.body}</span>
+                    <span class="post-meta">{["@" + m.username, timeAgo(m.ts), m.sentiment === "Bullish" ? "매수" : m.sentiment === "Bearish" ? "매도" : null].filter(Boolean).join(" · ")}</span>
+                  </li>
+                )}</For>
+              </ul>
+            </Show>
           </Show>
           <div class="dlg-status">{dlgStatus()}</div>
           <h3 class="dlg-sub">기술적 분석</h3>

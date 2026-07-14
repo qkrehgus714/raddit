@@ -131,6 +131,8 @@ export interface PostsPayload {
   news: up.NewsItem[];
   reddit_error: string | null;
   news_error: string | null;
+  stocktwits: up.StocktwitsSentiment | null;
+  st_error: string | null;
   generated_at: string;
 }
 
@@ -178,10 +180,11 @@ function filterNews(items: up.NewsItem[], ticker: string, name: string | null): 
 /** 레딧 게시물 + 뉴스를 병렬로 수집. 한쪽이 실패해도 나머지는 반환. */
 export async function getPosts(ticker: string): Promise<PostsPayload> {
   return postsCache.getOrCompute(ticker, async () => {
-    const [reddit, news, daily] = await Promise.allSettled([
+    const [reddit, news, daily, st] = await Promise.allSettled([
       up.fetchRedditPosts(ticker),
       up.fetchNews(ticker),
       getDaily(ticker), // 회사명 확보용 — 상세 모달의 일봉 캐시와 공유되어 대부분 무비용
+      up.fetchStocktwitsSentiment(ticker),
     ]);
     const name = daily.status === "fulfilled"
       ? ((daily.value.meta.shortName ?? daily.value.meta.longName ?? null) as string | null)
@@ -192,11 +195,13 @@ export async function getPosts(ticker: string): Promise<PostsPayload> {
       news: news.status === "fulfilled" ? filterNews(news.value, ticker, name) : [],
       reddit_error: reddit.status === "rejected" ? reason(reddit) : null,
       news_error: news.status === "rejected" ? reason(news) : null,
+      stocktwits: st.status === "fulfilled" ? st.value : null,
+      st_error: st.status === "rejected" ? reason(st) : null,
       generated_at: kstTime(),
     };
   }, {
     // 일부 실패한 응답은 짧게만 캐시 — 곧 재시도할 수 있게
-    ttlFor: v => (v.reddit_error || v.news_error ? 60_000 : 600_000),
+    ttlFor: v => (v.reddit_error || v.news_error || v.st_error ? 60_000 : 600_000),
   });
 }
 
