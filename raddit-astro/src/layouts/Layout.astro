@@ -114,7 +114,7 @@
   .board-head .hint { font-size: 0.76rem; color: var(--ink-3); }
 
   .scroller { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 0.87rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 0.87rem; }
   thead th {
     text-align: right; font-weight: 600; font-size: 0.72rem; letter-spacing: 0.05em;
     text-transform: uppercase; color: var(--ink-3);
@@ -271,6 +271,10 @@
   .bidask-bar { height: 6px; border-radius: 3px; overflow: hidden; background: var(--down); display: flex; }
   .bidask-buy { height: 100%; background: var(--up); }
   .bidask-label { font-size: 0.78rem; color: var(--ink-3); margin-top: 4px; }
+  .bidask-cell { display: flex; align-items: center; gap: 7px; justify-content: flex-end; }
+  .bidask-cell .bidask-bar { width: 52px; }
+  .bidask-num { font-variant-numeric: tabular-nums; font-size: 0.8rem; font-weight: 650; min-width: 2ch; text-align: right; }
+  .bidask-cell.thin { opacity: 0.4; }
 
   /* GitHub star badge */
   .gh-badge {
