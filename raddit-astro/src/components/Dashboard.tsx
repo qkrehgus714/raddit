@@ -455,7 +455,6 @@ export default function Dashboard() {
       position: d.type === "bull" ? "belowBar" : "aboveBar",
       shape: d.type === "bull" ? "arrowUp" : "arrowDown",
       color: d.type === "bull" ? up : down,   // 한국식: 강세=적, 약세=청
-      text: (d.type === "bull" ? "강세" : "약세") + "다이버(" + d.oscillator + ")",
     }));
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     divMarkers?.setMarkers(showDiv() ? markers : []);
