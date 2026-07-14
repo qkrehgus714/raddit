@@ -1,8 +1,9 @@
 // raddit 메인 대시보드 — SolidJS 컴포넌트
 // dashboard.html 1,126줄을 컴포넌트화. 모든 기능 100% 동등.
 import { createSignal, onMount, onCleanup, createMemo, Show, For } from "solid-js";
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
-import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter, ISeriesMarkersPluginApi, SeriesMarker } from "lightweight-charts";
+import { computeDivergences } from "../lib/indicators";
 
 // ── 상수 ──
 const FALSE_POSITIVE = new Set(["EU","IQ","RR","LINK","DC","API","LOT","ALL","PR","MA","D","ES","GL","IP","CAT","MU","ON","SO","IT","GO","AN","BE"]);
@@ -88,6 +89,7 @@ export default function Dashboard() {
   const [chartMeta, setChartMeta] = createSignal("");
   const [chartDim, setChartDim] = createSignal(false);
   const [chartMsg, setChartMsg] = createSignal("");
+  const [showDiv, setShowDiv] = createSignal(true);
   const [bidAskPct, setBidAskPct] = createSignal<number | null>(null);
 
   // 게시물
@@ -111,6 +113,7 @@ export default function Dashboard() {
   let chartContainerRef: HTMLDivElement | undefined;
   let chart: IChartApi | null = null;
   let candleSeries: ISeriesApi<"Candlestick"> | null = null;
+  let divMarkers: ISeriesMarkersPluginApi<any> | null = null;
   let volSeries: ISeriesApi<"Histogram"> | null = null;
   let ma20Series: ISeriesApi<"Line"> | null = null;
   let ma50Series: ISeriesApi<"Line"> | null = null;
@@ -237,6 +240,7 @@ export default function Dashboard() {
     candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
     });
+    divMarkers = createSeriesMarkers(candleSeries, []);
     volSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", color: cssVar("--bar") });
     chart.priceScale("").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     // 오버레이(MA/BB)는 가격 스케일 자동범위 산정에서 제외 — 캔들 데이터만으로 Y축을 정해
@@ -252,6 +256,7 @@ export default function Dashboard() {
   function destroyChart() {
     if (chart) { chart.remove(); chart = null; }
     candleSeries = volSeries = ma20Series = ma50Series = bbUpSeries = bbLowSeries = null;
+    divMarkers = null;
     baselineLine = null;
   }
 
@@ -260,6 +265,7 @@ export default function Dashboard() {
     lastRange = null;
     lastChartData = null;
     candleSeries?.setData([]);
+    divMarkers?.setMarkers([]);
     volSeries?.setData([]);
     ma20Series?.setData([]);
     ma50Series?.setData([]);
@@ -372,6 +378,20 @@ export default function Dashboard() {
       axisLabelVisible: true, title: isMin && data.prev_close ? "전일종가" : "",
     });
     lastChartData = data;
+
+    // 이슈 #57: RSI/MACD 다이버전스 마커
+    const up = cssVar("--up"), down = cssVar("--down");
+    const ptsForDiv = pts.map((p: any) => ({ t: p.t, o: p.o ?? p.c, h: p.h ?? p.c, l: p.l ?? p.c, c: p.c, v: p.v ?? null }));
+    const divs = computeDivergences(ptsForDiv);
+    const markers: SeriesMarker<any>[] = divs.map((d) => ({
+      time: d.t as UTCTimestamp,
+      position: d.type === "bull" ? "belowBar" : "aboveBar",
+      shape: d.type === "bull" ? "arrowUp" : "arrowDown",
+      color: d.type === "bull" ? up : down,   // 한국식: 강세=적, 약세=청
+      text: (d.type === "bull" ? "강세" : "약세") + "다이버(" + d.oscillator + ")",
+    }));
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    divMarkers?.setMarkers(showDiv() ? markers : []);
 
     chart.timeScale().fitContent();
 
@@ -826,6 +846,7 @@ export default function Dashboard() {
             <For each={RANGES}>{([v, l]) => (
               <button class={dlgRange() === v ? "active" : ""} onClick={() => { setDlgRange(v); loadDetail(); }}>{l}</button>
             )}</For>
+            <button class={"div-toggle" + (showDiv() ? " active" : "")} onClick={() => { setShowDiv((v) => !v); if (lastChartData) drawChart(lastChartData); }}>다이버전스</button>
           </div>
           <div id="chart-wrap" classList={{ dim: chartDim() }} ref={chartWrapRef}>
             <div class="chart-canvas" ref={chartContainerRef}></div>
