@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APE TERMINAL — Reddit Penny Stock War Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070a07; --bg2:#0a0e0a; --panel:#0e1410; --panel2:#131a14;
+    --line:#1d2a1f; --line2:#162017;
+    --ink:#e8f2e4; --ink-2:#8fa890; --ink-3:#566b57;
+    --up:#ff3b3b; --up-glow:rgba(255,59,59,.55); --up-bg:rgba(255,59,59,.12);
+    --down:#28a0ff; --down-bg:rgba(40,160,255,.12);
+    --gold:#ffcf3a; --neon:#39ff8b;
+    --mono:"JetBrains Mono",Consolas,monospace;
+    --display:"Space Grotesk",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--bg)}
+  body{margin:0;background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(57,255,139,.06), transparent 60%),
+    radial-gradient(900px 500px at 0% 100%, rgba(255,59,59,.07), transparent 55%),
+    var(--bg);
+    color:var(--ink);font-family:var(--mono);font-size:13px;-webkit-font-smoothing:antialiased;
+    min-height:100%}
+  /* CRT scanline overlay */
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.18) 2px 3px);mix-blend-mode:multiply;opacity:.35}
+  .wrap{max-width:1280px;margin:0 auto;padding:18px 22px 56px}
+
+  /* TICKER TAPE */
+  .tape{border:1px solid var(--line);border-radius:10px;background:#080c09;overflow:hidden;display:flex;align-items:center}
+  .tape .tag{flex:none;background:var(--up);color:#0a0a0a;font-weight:700;padding:7px 12px;font-size:11px;letter-spacing:.12em;
+    font-family:var(--display);clip-path:polygon(0 0,100% 0,calc(100% - 10px) 100%,0 100%)}
+  .tape .track{display:flex;gap:30px;padding:8px 16px;white-space:nowrap;overflow:hidden;font-size:12px;color:var(--ink-2)}
+  .tape b{color:var(--ink)} .u{color:var(--up)} .d{color:var(--down)} .rk{color:var(--gold)}
+
+  /* MASTHEAD */
+  .mast{display:flex;align-items:center;gap:14px;margin:16px 0 12px}
+  .crest{width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,#ff3b3b,#7a0d0d);
+    display:grid;place-items:center;font-size:1.5rem;color:#fff;box-shadow:0 0 22px var(--up-glow);position:relative}
+  .crest::after{content:"";position:absolute;inset:-3px;border-radius:14px;border:1px solid var(--up);opacity:.5}
+  h1{font-family:var(--display);font-size:1.7rem;font-weight:700;margin:0;letter-spacing:-.01em;line-height:1}
+  h1 span{color:var(--up)}
+  .tagline{font-size:11px;color:var(--ink-3);letter-spacing:.14em;text-transform:uppercase;font-family:var(--display);margin-top:3px}
+  .mast-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .pill-live{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--up);color:var(--up);
+    background:var(--up-bg);font-size:11px;font-weight:700;letter-spacing:.1em;padding:6px 11px;border-radius:7px;font-family:var(--display)}
+  .pill-live i{width:8px;height:8px;border-radius:50%;background:var(--up);box-shadow:0 0 10px var(--up);animation:bl 1.1s infinite}
+  @keyframes bl{50%{opacity:.25}}
+  .clock{font-size:12px;color:var(--ink-2)} .clock b{color:var(--gold)}
+
+  /* CONTROLS */
+  .ctrl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 16px}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel)}
+  .seg button{background:transparent;border:0;color:var(--ink-2);font:inherit;font-size:12px;padding:7px 14px;cursor:pointer;font-family:var(--display);font-weight:600;letter-spacing:.04em}
+  .seg button.on{background:var(--up);color:#0a0a0a}
+  .fld{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:6px 11px;font-size:12px;color:var(--ink-2)}
+  .fld b{color:var(--gold)} .fld select{background:transparent;border:0;color:var(--ink);font:inherit;font-size:12px;outline:none}
+  .scan{margin-left:auto;font-size:11px;color:var(--ink-3)}
+  .scan b{color:var(--neon)}
+
+  /* TOP GRID: hype meter + spotlight */
+  .hero{display:grid;grid-template-columns:1.15fr 1fr;gap:14px;margin-bottom:16px}
+  .panel{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
+  .phead{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  .phead .t{font-family:var(--display);font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--ink-2)}
+  .phead .t b{color:var(--ink)} .phead .x{font-size:10px;color:var(--ink-3);letter-spacing:.1em}
+
+  /* HYPE METER */
+  .hype{padding:16px 18px}
+  .hype-num{display:flex;align-items:baseline;gap:10px}
+  .hype-num .v{font-family:var(--display);font-size:3.2rem;font-weight:700;line-height:.9;color:var(--up);text-shadow:0 0 26px var(--up-glow)}
+  .hype-num .u{font-size:1rem;color:var(--ink-3);letter-spacing:.1em}
+  .meter{height:12px;border-radius:99px;background:#0a0e0a;border:1px solid var(--line);margin:14px 0 6px;position:relative;overflow:hidden}
+  .meter .fill{height:100%;width:78%;border-radius:99px;background:linear-gradient(90deg,var(--gold),var(--up));box-shadow:0 0 16px var(--up-glow)}
+  .meter .ticks{position:absolute;inset:0;display:flex;justify-content:space-between;padding:0 2px}
+  .meter .ticks i{width:1px;background:rgba(255,255,255,.08)}
+  .meter-lbl{display:flex;justify-content:space-between;font-size:10px;color:var(--ink-3);letter-spacing:.08em;font-family:var(--display)}
+  .hype-row{display:flex;gap:18px;margin-top:16px}
+  .hr{flex:1}
+  .hr .l{font-size:10px;letter-spacing:.1em;color:var(--ink-3);font-family:var(--display);text-transform:uppercase}
+  .hr .v{font-size:1.05rem;font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px}
+  .hr .v.u{color:var(--up)} .hr .v.d{color:var(--down)} .hr .v.g{color:var(--gold)}
+
+  /* SPOTLIGHT */
+  .spot{padding:16px 18px}
+  .spot-top{display:flex;align-items:center;gap:12px}
+  .rocket{font-size:2rem;filter:drop-shadow(0 0 10px var(--up-glow))}
+  .spot-tk{font-family:var(--display);font-size:1.7rem;font-weight:700}
+  .spot-nm{color:var(--ink-2);font-size:.82rem}
+  .spot-chg{margin-left:auto;text-align:right}
+  .spot-chg .p{font-family:var(--display);font-size:1.9rem;font-weight:700;color:var(--up);text-shadow:0 0 18px var(--up-glow)}
+  .spot-chg .px{font-size:.8rem;color:var(--ink-3)}
+  .sparkbar{display:flex;align-items:flex-end;gap:3px;height:46px;margin-top:14px}
+  .sparkbar i{flex:1;background:linear-gradient(180deg,var(--up),rgba(255,59,59,.2));border-radius:2px 2px 0 0;opacity:.85}
+  .spot-foot{display:flex;gap:18px;margin-top:14px;font-size:11px;color:var(--ink-3)}
+  .spot-foot b{color:var(--ink);font-size:13px;font-weight:700}
+
+  /* HEATMAP TREEMAP */
+  .heat{display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:62px;gap:6px;padding:14px}
+  .cell{border-radius:9px;padding:9px 11px;display:flex;flex-direction:column;justify-content:space-between;
+    border:1px solid rgba(255,255,255,.05);position:relative;overflow:hidden}
+  .cell .c-tk{font-family:var(--display);font-weight:700;font-size:.92rem}
+  .cell .c-chg{font-weight:700;font-size:.85rem;font-variant-numeric:tabular-nums}
+  .cell.g3{color:#fff;background:linear-gradient(135deg,#ff3b3b,#a01414);box-shadow:0 0 18px rgba(255,59,59,.4)}
+  .cell.g2{color:#fff;background:linear-gradient(135deg,#c62a2a,#7a1414)}
+  .cell.g1{color:var(--up);background:rgba(255,59,59,.16)}
+  .cell.f{color:var(--ink-2);background:var(--panel2)}
+  .cell.l1{color:var(--down);background:rgba(40,160,255,.14)}
+  .cell.l2{color:#9fd0ff;background:linear-gradient(135deg,#1f5a9e,#15355f)}
+  .cell .rk{position:absolute;top:6px;right:8px;font-size:9px;color:rgba(255,255,255,.5);letter-spacing:.08em}
+  .cell.g1 .rk,.cell.f .rk,.cell.l1 .rk{color:var(--ink-3)}
+
+  /* MAIN TABLE */
+  .tbl-wrap{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:16px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  thead th{text-align:right;font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:.09em;
+    color:var(--ink-3);padding:11px 13px;border-bottom:1px solid var(--line);white-space:nowrap;text-transform:uppercase;background:var(--panel2)}
+  thead th.l{text-align:left}
+  tbody td{padding:9px 13px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  tbody tr:hover{background:rgba(255,59,59,.05)}
+  td.l{text-align:left} td.dim{color:var(--ink-2)}
+  .tk{font-family:var(--display);font-weight:700;color:var(--ink)}
+  .nm{color:var(--ink-3);font-size:11px;margin-left:5px}
+  .rk-badge{font-family:var(--display);font-size:10px;color:var(--ink-3);font-weight:700}
+  .chg{font-family:var(--display);font-weight:700;font-variant-numeric:tabular-nums}
+  .chg.u{color:var(--up)} .chg.d{color:var(--down)}
+  /* bidask wall */
+  .ba{width:130px}
+  .ba .wall{height:8px;border-radius:3px;display:flex;overflow:hidden;background:var(--down-bg)}
+  .ba .buy{background:var(--up);box-shadow:0 0 8px var(--up-glow)}
+  .ba .lab{display:flex;justify-content:space-between;font-size:10px;margin-top:3px;color:var(--ink-3);font-family:var(--display)}
+  .ba .lab b{color:var(--up)} .ba.thin .lab b{color:var(--ink-3);text-shadow:none}
+  /* diamond hands badge */
+  .dh{font-size:10px;font-family:var(--display);font-weight:700;color:var(--gold);letter-spacing:.05em}
+  .foot{margin-top:18px;text-align:center;font-size:11px;color:var(--ink-3);letter-spacing:.05em}
+  .foot b{color:var(--up)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- TAPE -->
+  <div class="tape">
+    <div class="tag">LIVE FEED</div>
+    <div class="track">
+      <span><b>EU</b> 1.22 <span class="u">▲15.3%</span> 🚀</span>
+      <span><b>BATL</b> 1.89 <span class="u">▲12.4%</span></span>
+      <span><b>AMC</b> 1.87 <span class="u">▲6.8%</span></span>
+      <span><b>OPEN</b> 4.49 <span class="u">▲2.1%</span></span>
+      <span><b>DC</b> 4.34 <span class="u">▲1.5%</span></span>
+      <span><b>WTI</b> 3.55 <span class="d">▼4.2%</span></span>
+      <span><b>IQ</b> 1.13 <span class="d">▼2.8%</span></span>
+      <span><b>HTZ</b> 1.83 <span class="d">▼8.7%</span> 🩸</span>
+    </div>
+  </div>
+
+  <!-- MASTHEAD -->
+  <div class="mast">
+    <div class="crest">🦍</div>
+    <div>
+      <h1>APE <span>TERMINAL</span></h1>
+      <div class="tagline">Reddit Penny Stock War Room · r/wsb + r/pennystocks</div>
+    </div>
+    <div class="mast-right">
+      <span class="pill-live"><i></i>MARKET OPEN</span>
+      <span class="clock">14:<b>32</b>:05 KST</span>
+    </div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="ctrl">
+    <div class="seg"><button class="on">HEATMAP</button><button>LIST</button><button>GRID</button></div>
+    <div class="fld">FEED <select><option>all-stocks</option></select></div>
+    <div class="fld">PENNY <b>≤ $5</b></div>
+    <div class="fld">SORT <select><option>mentions</option></select></div>
+    <div class="scan">scan <b>751</b> · filtered <b>17</b></div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <!-- HYPE METER -->
+    <div class="panel">
+      <div class="phead"><span class="t"><b>◢</b> HYPE INDEX</span><span class="x">24H SENTIMENT</span></div>
+      <div class="hype">
+        <div class="hype-num"><span class="v">78</span><span class="u">/100 · EXTREME GREED</span></div>
+        <div class="meter"><div class="fill"></div><div class="ticks"><i></i><i></i><i></i><i></i><i></i></div></div>
+        <div class="meter-lbl"><span>FEAR</span><span>NEUTRAL</span><span>GREED</span></div>
+        <div class="hype-row">
+          <div class="hr"><div class="l">GAINERS</div><div class="v u">11</div></div>
+          <div class="hr"><div class="l">LOSERS</div><div class="v d">6</div></div>
+          <div class="hr"><div class="l">AVG BID</div><div class="v g">47%</div></div>
+          <div class="hr"><div class="l">Δ MENTIONS</div><div class="v u">+218%</div></div>
+        </div>
+      </div>
+    </div>
+    <!-- SPOTLIGHT -->
+    <div class="panel">
+      <div class="phead"><span class="t"><b>★</b> TOP GAINER</span><span class="x">SPOTLIGHT</span></div>
+      <div class="spot">
+        <div class="spot-top">
+          <span class="rocket">🚀</span>
+          <div><div class="spot-tk">EU</div><div class="spot-nm">Envela Corp · NYSE</div></div>
+          <div class="spot-chg"><div class="p">+15.3%</div><div class="px">$1.22 · vol 180K</div></div>
+        </div>
+        <div class="sparkbar"><i style="height:30%"></i><i style="height:42%"></i><i style="height:38%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:64%"></i><i style="height:88%"></i><i style="height:76%"></i><i style="height:100%"></i><i style="height:92%"></i><i style="height:96%"></i></div>
+        <div class="spot-foot"><span>언급 <b>27</b> (▲22)</span><span>업보트 <b>680</b></span><span>매수호가 <b>33%</b></span><span class="dh">◆ DIAMOND HANDS</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HEATMAP -->
+  <div class="panel">
+    <div class="phead"><span class="t"><b>▦</b> MENTIONS HEATMAP</span><span class="x">SIZE = MENTIONS · COLOR = %CHG</span></div>
+    <div class="heat">
+      <div class="cell g3" style="grid-column:span 2;grid-row:span 2"><span class="rk">#1</span><span class="c-tk">AMC</span><span class="c-chg">+6.8% · 874</span></div>
+      <div class="cell l2" style="grid-column:span 2"><span class="rk">#2</span><span class="c-tk">HTZ</span><span class="c-chg">-8.7% · 203</span></div>
+      <div class="cell l1"><span class="rk">#3</span><span class="c-tk">IQ</span><span class="c-chg">-2.8%</span></div>
+      <div class="cell g2"><span class="rk">#4</span><span class="c-tk">BATL</span><span class="c-chg">+12.4%</span></div>
+      <div class="cell l1"><span class="rk">#5</span><span class="c-tk">WTI</span><span class="c-chg">-4.2%</span></div>
+      <div class="cell g1"><span class="rk">#6</span><span class="c-tk">OPEN</span><span class="c-chg">+2.1%</span></div>
+      <div class="cell g3" style="grid-column:span 2"><span class="rk">#7</span><span class="c-tk">EU</span><span class="c-chg">+15.3% · 27 🚀</span></div>
+      <div class="cell g1"><span class="rk">#8</span><span class="c-tk">DC</span><span class="c-chg">+1.5%</span></div>
+      <div class="cell f"><span class="c-tk">SLNH</span><span class="c-chg">0.0%</span></div>
+      <div class="cell g1"><span class="c-tk">LINK</span><span class="c-chg">+0.9%</span></div>
+      <div class="cell l1"><span class="c-tk">RR</span><span class="c-chg">-1.2%</span></div>
+      <div class="cell g2"><span class="c-tk">KEEL</span><span class="c-chg">+5.6%</span></div>
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th class="l">RANK</th><th class="l">SYMBOL</th><th>LAST</th><th>CHG%</th><th>BID/ASK WALL</th><th>MENT(24h)</th><th>UPV</th><th>ΔRANK</th><th>SIGNAL</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="dim l"><span class="rk-badge">#001</span></td><td class="l"><span class="tk">AMC</span><span class="nm">AMC Ent.</span></td><td>1.87</td><td><span class="chg u">+6.80</span></td><td><div class="ba"><div class="wall"><div class="buy" style="width:49%"></div></div><div class="lab"><b>49%</b><span>51%</span></div></div></td><td>874</td><td class="dim">42000</td><td><span class="u">▲001</span></td><td><span class="dh">◆◆ HYPE</span></td></tr>
+        <tr><td class="dim l"><span class="rk-badge">#002</span></td><td class="l"><span class="tk">HTZ</span><span class="nm">Hertz</span></td><td>1.83</td><td><span class="chg d">-8.70</span></td><td><div class="ba thin"><div class="wall"><div class="buy" style="width:29%"></div></div><div class="lab"><b>29%</b><span>71%</span></div></div></td><td>203</td><td class="dim">11000</td><td><span class="u">▲045</span></td><td><span class="dh" style="color:var(--down)">▼ PAPER</span></td></tr>
+        <tr><td class="dim l"><span class="rk-badge">#003</span></td><td class="l"><span class="tk">IQ</span><span class="nm">iQIYI</span></td><td>1.13</td><td><span class="chg d">-2.80</span></td><td><div class="ba thin"><div class="wall"><div class="buy" style="width:50%"></div></div><div class="lab"><b>50%</b><span>50%</span></div></div></td><td>312</td><td class="dim">14000</td><td><span class="d">▼006</span></td><td><span class="dh">◆ WATCH</span></td></tr>
+        <tr><td class="dim l"><span class="rk-badge">#004</span></td><td class="l"><span class="tk">BATL</span><span class="nm">Battalion Oil</span></td><td>1.89</td><td><span class="chg u">+12.40</span></td><td><div class="ba"><div class="wall"><div class="buy" style="width:68%"></div></div><div class="lab"><b>68%</b><span>32%</span></div></div></td><td>142</td><td class="dim">8900</td><td><span class="u">▲012</span></td><td><span class="dh">◆◆ HYPE</span></td></tr>
+        <tr><td class="dim l"><span class="rk-badge">#005</span></td><td class="l"><span class="tk">WTI</span><span class="nm">W&T Offshore</span></td><td>3.55</td><td><span class="chg d">-4.20</span></td><td><div class="ba"><div class="wall"><div class="buy" style="width:44%"></div></div><div class="lab"><b>44%</b><span>56%</span></div></div></td><td>98</td><td class="dim">5400</td><td><span class="d">▼003</span></td><td><span class="dh">◆ WATCH</span></td></tr>
+        <tr><td class="dim l"><span class="rk-badge">#007</span></td><td class="l"><span class="tk">EU</span><span class="nm">Envela</span></td><td>1.22</td><td><span class="chg u">+15.30</span></td><td><div class="ba thin"><div class="wall"><div class="buy" style="width:33%"></div></div><div class="lab"><b>33%</b><span>67%</span></div></div></td><td>27</td><td class="dim">680</td><td><span class="u">▲022</span></td><td><span class="dh">🚀 MOON</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="foot">APE TERMINAL · <b>not financial advice</b> · apes together strong 🦍</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>THE REDDIT PENNY GAZETTE — Broadsheet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=Spectral:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#fff1e5; --paper2:#fbe7d6; --ink:#1a1410; --ink-2:#5b4a3a; --ink-3:#8a7864;
+    --rule:#d9c4ad; --rule2:#e8d6bf;
+    --up:#a8201a; /* 상승=짙은 적 (인쇄물 톤) */
+    --down:#1c3f6e;
+    --accent:#7a4a0c;
+  }
+  *{box-sizing:border-box}
+  html{background:#e9dcc8}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:"Spectral","Pretendard",Georgia,serif;font-size:15px;line-height:1.55;
+    -webkit-font-smoothing:antialiased}
+  /* paper grain */
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:2;opacity:.5;
+    background-image:radial-gradient(rgba(120,90,50,.05) 1px,transparent 1px);background-size:3px 3px;mix-blend-mode:multiply}
+  .sheet{max-width:1080px;margin:26px auto;background:var(--paper);
+    border:1px solid var(--rule);box-shadow:0 18px 60px rgba(60,40,20,.25);
+    padding:40px 52px 52px;position:relative}
+
+  /* MASTHEAD */
+  .mast{text-align:center;border-bottom:3px double var(--ink);padding-bottom:18px;margin-bottom:6px}
+  .mast .kicker{font-family:"Spectral";font-size:.72rem;letter-spacing:.34em;text-transform:uppercase;color:var(--ink-2);margin-bottom:8px}
+  .mast h1{font-family:"Playfair Display";font-weight:900;font-size:3.4rem;margin:0;letter-spacing:-.01em;line-height:1}
+  .mast h1 em{font-style:italic;font-weight:700;color:var(--accent)}
+  .dateline{display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-family:"Spectral";font-size:.78rem;color:var(--ink-2);border-top:1px solid var(--rule);padding-top:9px}
+  .dateline b{color:var(--ink)} .dateline .center{letter-spacing:.18em;text-transform:uppercase;font-weight:600;font-size:.72rem}
+
+  /* controls strip */
+  .ctrl{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--rule);padding:12px 0;margin-bottom:22px;flex-wrap:wrap}
+  .ctrl .grp{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--ink-2);font-family:"Spectral"}
+  .ctrl select{font-family:inherit;border:0;background:transparent;border-bottom:1px solid var(--rule);color:var(--ink);font-size:.86rem;outline:none;padding:1px 2px;font-style:italic}
+  .chip{font-size:.76rem;padding:4px 11px;border-radius:0;border:1px solid var(--rule);background:transparent;color:var(--ink-2);cursor:pointer;font-family:"Spectral";letter-spacing:.02em}
+  .chip.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  .ctrl .right{margin-left:auto;font-size:.76rem;color:var(--ink-3);font-style:italic}
+
+  /* LEAD: 2-col with rule */
+  .lead{display:grid;grid-template-columns:1.4fr 1px 1fr;gap:26px;margin-bottom:24px}
+  .vrule{background:var(--rule)}
+  .lead h2{font-family:"Playfair Display";font-weight:700;font-size:2rem;margin:0 0 6px;line-height:1.05;letter-spacing:-.01em}
+  .lead .deck{font-family:"Spectral";font-style:italic;color:var(--ink-2);font-size:1rem;margin:0 0 12px}
+  .lead p{margin:0 0 10px;font-size:.95rem;text-align:justify}
+  .drop{float:left;font-family:"Playfair Display";font-weight:900;font-size:3.4rem;line-height:.82;padding:6px 8px 0 0;color:var(--accent)}
+  .lead .byline{font-family:"Spectral";font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-top:6px}
+  .stat-block{border-top:2px solid var(--ink);border-bottom:1px solid var(--rule);padding:14px 0}
+  .stat-block h3{font-family:"Playfair Display";font-size:.82rem;letter-spacing:.16em;text-transform:uppercase;margin:0 0 10px;color:var(--ink-2)}
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 22px}
+  .st .l{font-size:.72rem;color:var(--ink-3);letter-spacing:.04em}
+  .st .v{font-family:"Playfair Display";font-weight:700;font-size:1.7rem;font-variant-numeric:tabular-nums;line-height:1;margin-top:2px}
+  .st .v.u{color:var(--up)} .st .v.d{color:var(--down)}
+  .st .n{font-size:.76rem;color:var(--ink-2);font-style:italic}
+  .pull{border-left:3px solid var(--accent);padding:4px 0 4px 14px;margin:14px 0;font-family:"Playfair Display";font-style:italic;font-size:1.15rem;color:var(--ink)}
+
+  /* SECTION HEADER */
+  .sec-head{display:flex;align-items:center;gap:14px;border-top:2px solid var(--ink);margin:6px 0 0;padding-top:12px}
+  .sec-head h2{font-family:"Playfair Display";font-weight:900;font-size:1.5rem;margin:0;letter-spacing:.005em}
+  .sec-head .meta{margin-left:auto;font-family:"IBM Plex Mono";font-size:.7rem;letter-spacing:.06em;color:var(--ink-3);text-transform:uppercase}
+
+  /* TICKER TABLE — newspaper style */
+  .tk-table{width:100%;border-collapse:collapse;font-family:"IBM Plex Mono";font-size:.84rem;margin-top:14px}
+  .tk-table thead th{text-align:right;font-weight:600;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);padding:8px 10px;border-bottom:1px solid var(--ink)}
+  .tk-table thead th.l{text-align:left}
+  .tk-table tbody td{padding:7px 10px;border-bottom:1px dotted var(--rule);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .tk-table tbody tr:nth-child(even){background:rgba(216,196,173,.18)}
+  td.l{text-align:left} td.dim{color:var(--ink-2)}
+  .sym{font-weight:600;letter-spacing:.02em}
+  .co{font-family:"Spectral";font-style:italic;color:var(--ink-2);font-size:.78rem;margin-left:6px}
+  .chg{font-weight:600} .chg.u{color:var(--up)} .chg.d{color:var(--down)} .chg.f{color:var(--ink-3)}
+  .ba{display:inline-flex;align-items:center;gap:6px}
+  .ba .wl{width:38px;height:3px;background:var(--down);position:relative}
+  .ba .wl i{position:absolute;left:0;top:0;bottom:0;background:var(--up)}
+  .ba.thin{opacity:.45} .ba .n{min-width:2ch}
+  .col3{display:grid;grid-template-columns:1.1fr 1px 1fr;gap:22px;margin-top:22px}
+  .col3 .vrule{background:var(--rule)}
+  .box h3{font-family:"Playfair Display";font-size:1.05rem;margin:0 0 8px;border-bottom:1px solid var(--rule);padding-bottom:5px}
+  .box ul{list-style:none;margin:0;padding:0}
+  .box li{display:flex;align-items:baseline;gap:8px;padding:6px 0;border-bottom:1px dotted var(--rule);font-size:.86rem}
+  .box li .rk{font-family:"IBM Plex Mono";font-weight:600;color:var(--ink-3);width:18px}
+  .box li b{font-family:"IBM Plex Mono"}
+  .box li .nm{font-family:"Spectral";font-style:italic;color:var(--ink-2);font-size:.78rem;margin-left:auto}
+  .box li .u{color:var(--up)} .box li .d{color:var(--down)}
+
+  .colophon{margin-top:30px;border-top:3px double var(--ink);padding-top:12px;display:flex;justify-content:space-between;font-family:"Spectral";font-size:.74rem;color:var(--ink-3);font-style:italic}
+  .colophon b{color:var(--ink-2);font-style:normal;letter-spacing:.04em}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <!-- MASTHEAD -->
+  <div class="mast">
+    <div class="kicker">Established 2026 · Markets &amp; Sentiment</div>
+    <h1>The Reddit Penny <em>Gazette</em></h1>
+    <div class="dateline">
+      <span>2026년 7월 14일 화요일</span>
+      <span class="center">Late Edition · 장중 호가 특집</span>
+      <span>Price: Free · <b>No.</b> 0053</span>
+    </div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="ctrl">
+    <div class="grp">서브레딧 <select><option>all-stocks</option></select></div>
+    <span class="chip on">$5 이하 페니</span>
+    <span class="chip">전체</span>
+    <div class="grp">정렬 <select><option>언급 많은순</option></select></div>
+    <span class="right">14:32 KST · 2분마다 발행</span>
+  </div>
+
+  <!-- LEAD -->
+  <div class="lead">
+    <div>
+      <h2>원유株 동반 상승… BATL 12%·WTI 혼조</h2>
+      <p class="deck">레딧 금융 서브레딧 언급량 기준, 페니주식 17종 중 11종이 상승 마감 세를 보이며 "extreme greed" 국면.</p>
+      <p><span class="drop">레</span>딧 커뮤니티의 관심이 배탈리언 오일(BATL)과 아이크이이(IQ) 등 소형 정유·콘텐츠주로 쏠렸다. AMC 엔터테인먼트는 여전히 언급 1위(874회)를 유지하며 6.8% 상승했고, 매수 호가 비중 49%로 균형권. 반면 허츠(HTZ)는 순위 45계단 급등에도 불구하고 8.7% 하락해 투매 압력이 관찰됐다.</p>
+      <p>매수 호가 우위가 뚜렷한 종목(BATL 68%·DC 54%)은 유동성이 양호한 반면, EU·OPEN 등은 잔량이 얇어 호가 비율이 노이즈로 해석된다 — 본지는 해당 종목을 점선 처리했다.</p>
+      <div class="pull">"호가잔량은 거래소의 체온계다 — 그러나 얕은 시장에선 눈금이 흐려진다."</div>
+      <div class="byline">— 시장관측반 · 14:32 발행</div>
+    </div>
+    <div class="vrule"></div>
+    <div>
+      <div class="stat-block">
+        <h3>시장 개요</h3>
+        <div class="stat-grid">
+          <div class="st"><div class="l">스캔 종목</div><div class="v">751</div><div class="n">all-stocks 집계</div></div>
+          <div class="st"><div class="l">페니 필터</div><div class="v">17</div><div class="n">$5 이하</div></div>
+          <div class="st"><div class="l">평균 등락</div><div class="v u">+3.2%</div><div class="n">extreme greed</div></div>
+          <div class="st"><div class="l">상승 / 하락</div><div class="v">11 / 6</div><div class="n">매수 우위 평균 47%</div></div>
+        </div>
+      </div>
+      <div class="stat-block" style="border-top:1px solid var(--rule)">
+        <h3>헤드라인 지표</h3>
+        <div class="stat-grid">
+          <div class="st"><div class="l">최다 언급</div><div class="v" style="font-size:1.3rem">AMC</div><div class="n">874회 · 업보트 42K</div></div>
+          <div class="st"><div class="l">급등 1위</div><div class="v u" style="font-size:1.3rem">EU +15%</div><div class="n">순위 ▲22</div></div>
+          <div class="st"><div class="l">급락 1위</div><div class="v d" style="font-size:1.3rem">HTZ -9%</div><div class="n">순위 ▲45 (투매)</div></div>
+          <div class="st"><div class="l">매수 우위</div><div class="v" style="font-size:1.3rem;color:var(--accent)">BATL 68%</div><div class="n">잔량 18,600</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: BOARD -->
+  <div class="sec-head"><h2>Penny Stock Listings</h2><span class="meta">14:32 기준 · 언급순</span></div>
+  <table class="tk-table">
+    <thead><tr><th class="l">#</th><th class="l">Symbol / Company</th><th>Last</th><th>Net Chg</th><th>Bid %</th><th>Mentions</th><th>Upvotes</th><th>Δ Rank</th><th>Volume</th></tr></thead>
+    <tbody>
+      <tr><td class="dim l">1</td><td class="l"><span class="sym">AMC</span><span class="co">AMC Entertainment</span></td><td>1.87</td><td><span class="chg u">▲ 6.80</span></td><td><span class="ba"><span class="wl"><i style="width:49%"></i></span><span class="n">49</span></span></td><td>874</td><td class="dim">42,000</td><td><span class="chg u">▲ 1</span></td><td class="dim">18.2M</td></tr>
+      <tr><td class="dim l">2</td><td class="l"><span class="sym">HTZ</span><span class="co">Hertz Global</span></td><td>1.83</td><td><span class="chg d">▼ 8.70</span></td><td><span class="ba thin"><span class="wl"><i style="width:29%"></i></span><span class="n">29</span></span></td><td>203</td><td class="dim">11,000</td><td><span class="chg u">▲ 45</span></td><td class="dim">9.8M</td></tr>
+      <tr><td class="dim l">3</td><td class="l"><span class="sym">IQ</span><span class="co">iQIYI Inc.</span></td><td>1.13</td><td><span class="chg d">▼ 2.80</span></td><td><span class="ba thin"><span class="wl"><i style="width:50%"></i></span><span class="n">50</span></span></td><td>312</td><td class="dim">14,000</td><td><span class="chg d">▼ 6</span></td><td class="dim">5.6M</td></tr>
+      <tr><td class="dim l">4</td><td class="l"><span class="sym">BATL</span><span class="co">Battalion Oil</span></td><td>1.89</td><td><span class="chg u">▲ 12.40</span></td><td><span class="ba"><span class="wl"><i style="width:68%"></i></span><span class="n">68</span></span></td><td>142</td><td class="dim">8,900</td><td><span class="chg u">▲ 12</span></td><td class="dim">1.2M</td></tr>
+      <tr><td class="dim l">5</td><td class="l"><span class="sym">WTI</span><span class="co">W&T Offshore</span></td><td>3.55</td><td><span class="chg d">▼ 4.20</span></td><td><span class="ba"><span class="wl"><i style="width:44%"></i></span><span class="n">44</span></span></td><td>98</td><td class="dim">5,400</td><td><span class="chg d">▼ 3</span></td><td class="dim">2.1M</td></tr>
+      <tr><td class="dim l">6</td><td class="l"><span class="sym">OPEN</span><span class="co">Opendoor Tech.</span></td><td>4.49</td><td><span class="chg u">▲ 2.10</span></td><td><span class="ba thin"><span class="wl"><i style="width:50%"></i></span><span class="n">50</span></span></td><td>56</td><td class="dim">2,100</td><td><span class="chg f">new</span></td><td class="dim">3.4M</td></tr>
+      <tr><td class="dim l">7</td><td class="l"><span class="sym">EU</span><span class="co">Envela Corp.</span></td><td>1.22</td><td><span class="chg u">▲ 15.30</span></td><td><span class="ba thin"><span class="wl"><i style="width:33%"></i></span><span class="n">33</span></span></td><td>27</td><td class="dim">680</td><td><span class="chg u">▲ 22</span></td><td class="dim">180K</td></tr>
+      <tr><td class="dim l">8</td><td class="l"><span class="sym">DC</span><span class="co">Discovery Silver</span></td><td>4.34</td><td><span class="chg u">▲ 1.50</span></td><td><span class="ba"><span class="wl"><i style="width:54%"></i></span><span class="n">54</span></span></td><td>34</td><td class="dim">1,200</td><td><span class="chg d">▼ 8</span></td><td class="dim">420K</td></tr>
+    </tbody>
+  </table>
+
+  <!-- 3-col: gainers / losers / bidask leaders -->
+  <div class="col3">
+    <div class="box">
+      <h3>급등 — Top Gainers</h3>
+      <ul>
+        <li><span class="rk">1</span><b>EU</b><span class="u">+15.3%</span><span class="nm">엔벨라</span></li>
+        <li><span class="rk">2</span><b>BATL</b><span class="u">+12.4%</span><span class="nm">배탈리언 오일</span></li>
+        <li><span class="rk">3</span><b>AMC</b><span class="u">+6.8%</span><span class="nm">AMC 엔터테인</span></li>
+        <li><span class="rk">4</span><b>OPEN</b><span class="u">+2.1%</span><span class="nm">오픈도어</span></li>
+        <li><span class="rk">5</span><b>DC</b><span class="u">+1.5%</span><span class="nm">디스커버리 실버</span></li>
+      </ul>
+    </div>
+    <div class="vrule"></div>
+    <div class="box">
+      <h3>매수 호가 우위 — Bid Leaders</h3>
+      <ul>
+        <li><span class="rk">1</span><b>BATL</b><span class="u">68%</span><span class="nm">잔량 18,600</span></li>
+        <li><span class="rk">2</span><b>DC</b><span class="u">54%</span><span class="nm">잔량 5,000</span></li>
+        <li><span class="rk">3</span><b>AMC</b><span class="u">49%</span><span class="nm">잔량 63,000</span></li>
+        <li><span class="rk">4</span><b>WTI</b><span class="u">44%</span><span class="nm">잔량 22,800</span></li>
+        <li><span class="rk">5</span><b>EU</b><span style="color:var(--ink-3)">33%</span><span class="nm">잔량 얇음</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="colophon">
+    <span><b>THE REDDIT PENNY GAZETTE</b> · 본 지는 투자 권고가 아닙니다.</span>
+    <span>Concept 3 · Broadsheet — 인쇄물 톤 / 세리프 / 칼럼 룰</span>
+  </div>
+</div>
+</body>
+</html>
