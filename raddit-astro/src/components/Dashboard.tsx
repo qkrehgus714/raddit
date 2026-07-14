@@ -1,7 +1,7 @@
 // raddit 메인 대시보드 — SolidJS 컴포넌트
 // dashboard.html 1,126줄을 컴포넌트화. 모든 기능 100% 동등.
 import { createSignal, onMount, onCleanup, createMemo, Show, For } from "solid-js";
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter, ISeriesMarkersPluginApi, SeriesMarker } from "lightweight-charts";
 import { computeDivergences } from "../lib/indicators";
 import { SessionBandsPrimitive, computeIntradaySessions } from "../lib/sessionBands";
@@ -84,6 +84,11 @@ export default function Dashboard() {
   const [boardTitle, setBoardTitle] = createSignal("언급 상위 종목");
   const [version, setVersion] = createSignal("v0.1.0");
   const [starCount, setStarCount] = createSignal<number | null>(null);
+  // 보기 모드 (목록/스크리너) — localStorage 에 저장
+  // 보기 모드 (목록/스크리너) — localStorage 저장. SSR/hydration 일치를 위해
+  // 초기값은 'list' 고정, onMount 에서 localStorage 를 읽어 grid 로 전환.
+  const [viewMode, setViewMode] = createSignal<"list" | "grid">("list");
+  const switchView = (m: "list" | "grid") => { setViewMode(m); try { localStorage.setItem("raddit-view", m); } catch {} };
 
   // 상세 모달
   const [dlgOpen, setDlgOpen] = createSignal(false);
@@ -144,6 +149,40 @@ export default function Dashboard() {
   let searchSeq = 0;
 
   const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  let miniChartEls: HTMLDivElement[] = [];
+
+  // 스크리너 미니 스파크라인 — IntersectionObserver 로 뷰포트 진입 시 지연 마운트.
+  // /api/spark 는 services.getDaily(10분 캐시)를 재사용해 종가만 가볍게 내려준다.
+  function mountMiniChart(container: HTMLDivElement, ticker: string, color: string) {
+    let chart: any = null;
+    let cancelled = false;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          io.disconnect();
+          if (cancelled) return;
+          chart = createChart(container, {
+            autoSize: true, layout: { attributionLogo: false, background: { type: ColorType.Solid, color: "transparent" }, textColor: "transparent" },
+            grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+            rightPriceScale: { visible: false }, timeScale: { visible: false },
+            crosshair: { mode: CrosshairMode.Normal }, handleScale: false, handleScroll: false,
+          });
+          const area = chart.addSeries(AreaSeries, { lineColor: color, topColor: color + "55", bottomColor: color + "00", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+          fetch(`/api/spark?ticker=${encodeURIComponent(ticker)}`).then(r => r.json()).then(d => {
+            if (cancelled || !chart) return;
+            const pts = (d.points || []).map((p: any) => ({ time: p.t as UTCTimestamp, value: p.c }));
+            if (pts.length > 1) { area.setData(pts); chart.timeScale().fitContent(); }
+          }).catch(() => {});
+        }
+      }
+    }, { rootMargin: "120px" });
+    io.observe(container);
+    // 카드 dispose(<Show>/<For> 교체·새로고침·뷰전환) 시 인스턴스 누수 방지 —
+    // Solid 소유권에 연결된 onCleanup (페이지 언마운트용 miniChartEls 루프는 안전망으로 유지)
+    onCleanup(() => { cancelled = true; io.disconnect(); if (chart) { chart.remove(); chart = null; } });
+    miniChartEls.push(container);
+    (container as any)._cleanup = () => { cancelled = true; io.disconnect(); if (chart) { chart.remove(); chart = null; } };
+  }
 
   // ── 데이터 로드 ──
   async function load() {
@@ -673,6 +712,7 @@ export default function Dashboard() {
 
   // ── 생명주기 ──
   onMount(() => {
+    try { if (localStorage.getItem("raddit-view") === "grid") setViewMode("grid"); } catch {}
     load();
     fetch("/api/version").then(r => r.json()).then(d => { if (d.version) setVersion(`v${d.version}`); }).catch(() => {});
     fetch("/api/stars").then(r => r.json()).then(d => { if (d.stars != null) setStarCount(d.stars); }).catch(() => {});
@@ -694,6 +734,10 @@ export default function Dashboard() {
       window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", mqListener);
     }
     destroyChart();
+    // 스크리너 그리드 미니 차트 정리 (페이지 언마운트 시). 뷰 전환으로 분리된
+    // 카드는 새 그리드 렌더링 시 재마운트되므로 v1에선 전환 중 누수를 허용.
+    for (const el of miniChartEls) { const c = (el as any)._cleanup; if (c) c(); }
+    miniChartEls = [];
     if (dlgTimer) clearTimeout(dlgTimer);
     if (searchTimer) clearTimeout(searchTimer);
   });
@@ -736,6 +780,10 @@ export default function Dashboard() {
           </select>
         </label>
         <button class="refresh" id="btn-refresh" disabled={loading()} onClick={load}>새로고침</button>
+        <div class="view-toggle" role="group" aria-label="보기 모드">
+          <button type="button" class={viewMode() === "list" ? "active" : ""} onClick={() => switchView("list")}>목록</button>
+          <button type="button" class={viewMode() === "grid" ? "active" : ""} onClick={() => switchView("grid")}>스크리너</button>
+        </div>
         <div class="search">
           <input
             placeholder="티커·종목명 검색 (예: TSLA, tesla)"
@@ -805,8 +853,9 @@ export default function Dashboard() {
       <div class="board">
         <div class="board-head">
           <h2>{boardTitle()}</h2>
-          <span class="hint">열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석</span>
+          <span class="hint">{viewMode() === "list" ? "열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석" : "카드 클릭 → 실시간 차트와 분석"}</span>
         </div>
+        <Show when={viewMode() === "list"}>
         <div class="scroller">
           <table>
             <thead><tr>
@@ -865,6 +914,35 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
+        </Show>
+        <Show when={viewMode() === "grid"}>
+          <div class="screener-grid">
+            <For each={sortedRows().slice(0, 60)}>{(d: Row) => {
+              const mv = rankMove(d);
+              const up = (d.chg ?? 0) >= 0;
+              const raw = cssVar(up ? "--up" : "--down");
+              const lineColor = raw.startsWith("#") ? raw : (up ? "#d4383e" : "#2563eb");
+              return (
+                <div class="srt-card" role="button" tabindex={0}
+                  onClick={() => openDetail(d.ticker)}
+                  onKeyDown={(e) => { if (e.key === "Enter") openDetail(d.ticker); }}
+                >
+                  <div class="srt-head">
+                    <span class="srt-tk">{d.ticker}</span>
+                    <span class="srt-name">{d.name || ""}</span>
+                    <span class={`srt-chg ${up ? "up" : "down"}`}>{d.price != null ? fmtPrice(d.price) : "-"} {d.chg != null ? (up ? "+" : "") + d.chg.toFixed(1) + "%" : ""}</span>
+                  </div>
+                  <div class="mini-chart" ref={(el: HTMLDivElement) => mountMiniChart(el, d.ticker, lineColor)}></div>
+                  <div class="srt-foot">
+                    <span>언급 {d.mentions ?? 0}</span>
+                    <span>순위 {d.rank ?? "-"} <span class={`pill ${mv.cls}`}>{mv.txt}</span></span>
+                    <span>호가 {d.bidAskPct != null ? d.bidAskPct.toFixed(0) + "%" : "-"}</span>
+                  </div>
+                </div>
+              );
+            }}</For>
+          </div>
+        </Show>
       </div>
 
       {/* Changelog 오버레이 */}

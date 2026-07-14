@@ -298,6 +298,19 @@
   .gh-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .gh-icon { display: inline-block; flex: none; }
   .gh-stars { font-variant-numeric: tabular-nums; }
+  .view-toggle { display: inline-flex; gap: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .view-toggle button { background: var(--card); color: var(--ink-2); border: 0; padding: 6px 12px; font-size: .85rem; cursor: pointer; }
+  .view-toggle button.active { background: var(--accent); color: #fff; }
+  .screener-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; padding: 12px 0; }
+  .srt-card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: border-color .15s; }
+  .srt-card:hover { border-color: var(--accent); }
+  .srt-head { display: flex; align-items: baseline; gap: 8px; }
+  .srt-tk { font-weight: 700; color: var(--ink); }
+  .srt-name { font-size: .78rem; color: var(--ink-3); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .srt-chg { font-variant-numeric: tabular-nums; font-size: .85rem; }
+  .srt-chg.up { color: var(--up); } .srt-chg.down { color: var(--down); }
+  .mini-chart { height: 60px; margin: 6px -4px; }
+  .srt-foot { display: flex; justify-content: space-between; font-size: .72rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
