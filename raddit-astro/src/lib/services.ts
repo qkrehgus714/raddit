@@ -13,6 +13,7 @@ const detailCache = new TtlCache<DetailPayload>(300_000, 300_000);
 const dailyCache = new TtlCache<up.ChartData>(600_000, 600_000);
 const postsCache = new TtlCache<PostsPayload>(600_000, 300_000);
 const searchCache = new TtlCache<SearchPayload>(600_000, 600_000);
+const fundamentalsCache = new TtlCache<FundamentalsPayload>(600_000, 600_000);
 // StockTwits 공개 엔드포인트가 Cloudflare JS 챌린지(403) 로 서버사이드 차단 —
 // 소스 결정(#40/#56) 전까지 dormant. STOCKTWITS_ENABLED=1 시에만 호출·노출.
 const ST_ENABLED = process.env.STOCKTWITS_ENABLED === "1";
@@ -208,6 +209,28 @@ export async function getPosts(ticker: string): Promise<PostsPayload> {
     // 일부 실패한 응답은 짧게만 캐시 — 곧 재시도할 수 있게
     // (st_error 는 분리 — StockTwits 실패가 레딧/뉴스 캐시를 단축시키지 않게)
     ttlFor: v => (v.reddit_error || v.news_error ? 60_000 : 600_000),
+  });
+}
+
+export interface FundamentalsPayload {
+  ticker: string;
+  data: up.Fundamentals | null;
+  error: string | null;
+  generated_at: string;
+}
+
+/** SEC EDGAR 펀더멘털(공시·재무) — getPosts 와 동일하게 독립 캐시·장애 격리.
+ *  EDGAR 장애는 error 에만 담기고 다른 패널에 영향을 주지 않는다. */
+export async function getFundamentals(ticker: string): Promise<FundamentalsPayload> {
+  return fundamentalsCache.getOrCompute(ticker, async () => {
+    try {
+      return { ticker, data: await up.fetchFundamentals(ticker), error: null, generated_at: kstTime() };
+    } catch (e: any) {
+      return { ticker, data: null, error: e?.message ?? String(e), generated_at: kstTime() };
+    }
+  }, {
+    // EDGAR 일시 장애 응답은 짧게 캐시해 곧 재시도
+    ttlFor: v => v.error ? 60_000 : 600_000,
   });
 }
 

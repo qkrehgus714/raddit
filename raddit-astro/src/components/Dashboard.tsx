@@ -37,6 +37,16 @@ function fmtVol(v: number | null): string {
   return String(v);
 }
 function fmtPrice(v: number): string { return "$" + (Math.abs(v) < 1 ? v.toFixed(3) : v.toFixed(2)); }
+function fmtM(v: number | null | undefined): string {
+  if (v == null) return "-";
+  const sign = v < 0 ? "-" : "";
+  const a = Math.abs(v);
+  if (a >= 1e12) return sign + "$" + (a / 1e12).toFixed(2) + "T";
+  if (a >= 1e9) return sign + "$" + (a / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return sign + "$" + (a / 1e6).toFixed(1) + "M";
+  if (a >= 1e3) return sign + "$" + (a / 1e3).toFixed(1) + "K";
+  return sign + "$" + a.toFixed(0);
+}
 function rankMove(d: Row): { cls: string; txt: string } {
   if (!d.rank_24h_ago) return { cls: "new", txt: "NEW" };
   const diff = d.rank_24h_ago - d.rank;
@@ -98,6 +108,10 @@ export default function Dashboard() {
   const [redditEmpty, setRedditEmpty] = createSignal("");
   const [newsPosts, setNewsPosts] = createSignal<{title:string;publisher?:string;url?:string;ts?:number}[]>([]);
   const [newsEmpty, setNewsEmpty] = createSignal("");
+  // SEC 펀더멘털(공시·재무)
+  const [fund, setFund] = createSignal<{cik:string|null; filings:{form:string;date:string;docDesc:string|null;url:string}[]; financials:any|null} | null>(null);
+  const [fundLoading, setFundLoading] = createSignal(false);
+  const [fundError, setFundError] = createSignal("");
   const [stSent, setStSent] = createSignal<{bullish_pct:number|null; messages:{body:string;username:string;ts:number|null;sentiment:string|null}[]; total:number; tagged:number} | null>(null);
   const [stEmpty, setStEmpty] = createSignal("");
   const [stEnabled, setStEnabled] = createSignal(false);
@@ -443,6 +457,7 @@ export default function Dashboard() {
     clearChart();
     loadDetail();
     loadPosts(ticker);
+    loadFundamentals(ticker);
   }
 
   function closeDetail() {
@@ -524,6 +539,25 @@ export default function Dashboard() {
       setRedditPosts([]); setRedditEmpty("불러오기 실패: " + err.message);
       setNewsPosts([]); setNewsEmpty("불러오기 실패: " + err.message);
       setStSent(null); setStEmpty("불러오기 실패: " + err.message);
+    }
+  }
+
+  // ── SEC 펀더멘털(공시·재무) ── loadPosts 와 동일 패턴. EDGAR 장애는 독립.
+  async function loadFundamentals(ticker: string) {
+    setFund(null); setFundError(""); setFundLoading(true);
+    try {
+      const res = await fetch(`/api/fundamentals?ticker=${encodeURIComponent(ticker)}`);
+      const data = await res.json();
+      if (dlgTicker() !== ticker) return;
+      if (!res.ok) throw new Error(data.error || res.status);
+      setFund(data.data || null);
+      setFundError(data.error || "");
+    } catch (err: any) {
+      if (dlgTicker() !== ticker) return;
+      setFund(null);
+      setFundError("불러오기 실패: " + err.message);
+    } finally {
+      if (dlgTicker() === ticker) setFundLoading(false);
     }
   }
 
@@ -933,6 +967,34 @@ export default function Dashboard() {
               )}</For>
             </Show>
           </ul>
+          <Show when={fundLoading()}><p class="dlg-status">재무/공시 불러오는 중…</p></Show>
+          <Show when={fundError()}><p class="dlg-status">{fundError()}</p></Show>
+          <Show when={!fundLoading()}>
+            <Show when={fund()?.cik} fallback={<p class="dlg-status">SEC 공시 의무 없음 (OTC/소형주 가능)</p>}>
+              <h3 class="dlg-sub">재무 하이라이트 <Show when={fund()?.financials?.as_of}><span class="dlg-note">{fund()!.financials!.as_of} 기준</span></Show></h3>
+              <Show when={fund()?.financials} fallback={<p class="dlg-status">재무 데이터가 없습니다</p>}>
+                <div class="ind-grid">
+                  <div class="ind"><div class="label">매출 TTM</div><div class="value">{fmtM(fund()!.financials!.revenues_ttm)}</div></div>
+                  <div class="ind"><div class="label">순이익 TTM</div><div class="value">{fmtM(fund()!.financials!.net_income_ttm)}</div></div>
+                  <div class="ind"><div class="label">총자산</div><div class="value">{fmtM(fund()!.financials!.total_assets)}</div></div>
+                  <div class="ind"><div class="label">EPS</div><div class="value">{fund()!.financials!.eps != null ? "$" + fund()!.financials!.eps.toFixed(2) : "-"}</div></div>
+                  <div class="ind"><div class="label">현금·단기투자</div><div class="value">{fmtM(fund()!.financials!.cash)}</div></div>
+                  <div class="ind"><div class="label">영업현금흐름 TTM</div><div class="value">{fmtM(fund()!.financials!.operating_cf_ttm)}</div></div>
+                </div>
+              </Show>
+              <h3 class="dlg-sub">SEC 공시</h3>
+              <Show when={(fund()?.filings.length ?? 0) > 0} fallback={<p class="dlg-status">최근 관련 공시가 없습니다</p>}>
+                <ul class="post-list">
+                  <For each={fund()!.filings}>{(f) => (
+                    <li>
+                      <a href={f.url} target="_blank" rel="noopener noreferrer">{f.form}{f.docDesc ? " · " + f.docDesc : ""}</a>
+                      <span class="post-meta">{f.date}</span>
+                    </li>
+                  )}</For>
+                </ul>
+              </Show>
+            </Show>
+          </Show>
           <p class="disclaimer">1년 일봉 기준으로 자동 계산된 참고 지표이며, 투자 판단의 근거가 아닙니다.</p>
         </div>
       </div>
