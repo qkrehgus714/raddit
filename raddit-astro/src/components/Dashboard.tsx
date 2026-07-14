@@ -1,7 +1,7 @@
 // raddit 메인 대시보드 — SolidJS 컴포넌트
 // dashboard.html 1,126줄을 컴포넌트화. 모든 기능 100% 동등.
 import { createSignal, onMount, onCleanup, createMemo, Show, For } from "solid-js";
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter, ISeriesMarkersPluginApi, SeriesMarker } from "lightweight-charts";
 import { computeDivergences } from "../lib/indicators";
 import { SessionBandsPrimitive, computeIntradaySessions } from "../lib/sessionBands";
@@ -151,9 +151,9 @@ export default function Dashboard() {
   const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   let miniChartEls: HTMLDivElement[] = [];
 
-  // 스크리너 미니 스파크라인 — IntersectionObserver 로 뷰포트 진입 시 지연 마운트.
-  // /api/spark 는 services.getDaily(10분 캐시)를 재사용해 종가만 가볍게 내려준다.
-  function mountMiniChart(container: HTMLDivElement, ticker: string, color: string) {
+  // 스크리너 미니 차트 — IntersectionObserver 로 뷰포트 진입 시 지연 마운트.
+  // /api/spark 는 services.getDaily(10분 캐시) 재사용. 캔들+다이버전스 마커용 OHLC 내림 (상세모달 일간차트와 1:1).
+  function mountMiniChart(container: HTMLDivElement, ticker: string) {
     let chart: any = null;
     let cancelled = false;
     const io = new IntersectionObserver((entries) => {
@@ -161,17 +161,32 @@ export default function Dashboard() {
         if (e.isIntersecting) {
           io.disconnect();
           if (cancelled) return;
+          const up = cssVar("--up"), down = cssVar("--down");
           chart = createChart(container, {
             autoSize: true, layout: { attributionLogo: false, background: { type: ColorType.Solid, color: "transparent" }, textColor: "transparent" },
             grid: { vertLines: { visible: false }, horzLines: { visible: false } },
             rightPriceScale: { visible: false }, timeScale: { visible: false },
-            crosshair: { mode: CrosshairMode.Normal }, handleScale: false, handleScroll: false,
+            crosshair: { mode: CrosshairMode.Normal, vertLine: { visible: false }, horzLine: { visible: false } }, handleScale: false, handleScroll: false,
           });
-          const area = chart.addSeries(AreaSeries, { lineColor: color, topColor: color + "55", bottomColor: color + "00", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+          // 상세모달 일간차트와 1:1 — 캔들 + RSI/MACD 다이버전스 마커
+          const candle = chart.addSeries(CandlestickSeries, { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down, priceLineVisible: false, lastValueVisible: false });
+          const divMk = createSeriesMarkers(candle, []);
           fetch(`/api/spark?ticker=${encodeURIComponent(ticker)}`).then(r => r.json()).then(d => {
             if (cancelled || !chart) return;
-            const pts = (d.points || []).map((p: any) => ({ time: p.t as UTCTimestamp, value: p.c }));
-            if (pts.length > 1) { area.setData(pts); chart.timeScale().fitContent(); }
+            const pts: any[] = d.points || [];
+            if (pts.length > 1) {
+              candle.setData(pts.map((p: any) => ({ time: p.t as UTCTimestamp, open: p.o, high: p.h, low: p.l, close: p.c })));
+              const divs = computeDivergences(pts.map((p: any) => ({ t: p.t, o: p.o, h: p.h, l: p.l, c: p.c, v: p.v ?? null })));
+              const markers: SeriesMarker<any>[] = divs.map((dv) => ({
+                time: dv.t as UTCTimestamp,
+                position: dv.type === "bull" ? "belowBar" : "aboveBar",
+                shape: dv.type === "bull" ? "arrowUp" : "arrowDown",
+                color: dv.type === "bull" ? up : down,
+              }));
+              markers.sort((a, b) => (a.time as number) - (b.time as number));
+              divMk.setMarkers(markers);
+              chart.timeScale().fitContent();
+            }
           }).catch(() => {});
         }
       }
@@ -919,8 +934,6 @@ export default function Dashboard() {
             <For each={sortedRows().slice(0, 60)}>{(d: Row) => {
               const mv = rankMove(d);
               const up = (d.chg ?? 0) >= 0;
-              const raw = cssVar(up ? "--up" : "--down");
-              const lineColor = raw.startsWith("#") ? raw : (up ? "#d4383e" : "#2563eb");
               return (
                 <div class="srt-card" role="button" tabindex={0}
                   onClick={() => openDetail(d.ticker)}
@@ -931,7 +944,7 @@ export default function Dashboard() {
                     <span class="srt-name">{d.name || ""}</span>
                     <span class={`srt-chg ${up ? "up" : "down"}`}>{d.price != null ? fmtPrice(d.price) : "-"} {d.chg != null ? (up ? "+" : "") + d.chg.toFixed(1) + "%" : ""}</span>
                   </div>
-                  <div class="mini-chart" ref={(el: HTMLDivElement) => mountMiniChart(el, d.ticker, lineColor)}></div>
+                  <div class="mini-chart" ref={(el: HTMLDivElement) => mountMiniChart(el, d.ticker)}></div>
                   <div class="srt-foot">
                     <span>언급 {d.mentions ?? 0}</span>
                     <span>순위 {d.rank ?? "-"} <span class={`pill ${mv.cls}`}>{mv.txt}</span></span>
