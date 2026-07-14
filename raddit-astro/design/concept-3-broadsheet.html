@@ -7,6 +7,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=Spectral:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5
+ * macrostructure: Long Document · theme: custom (financial-broadsheet)
+ * differs on: paper(light salmon)·display(high-contrast-serif)·accent(warm)
+ * no italic headers · honest · token discipline · tabular-nums
+ */
   :root{
     --paper:#fff1e5; --paper2:#fbe7d6; --ink:#1a1410; --ink-2:#5b4a3a; --ink-3:#8a7864;
     --rule:#d9c4ad; --rule2:#e8d6bf;
@@ -16,6 +21,7 @@
   }
   *{box-sizing:border-box}
   html{background:#e9dcc8}
+  html,body{overflow-x:clip}
   body{margin:0;background:var(--paper);color:var(--ink);
     font-family:"Spectral","Pretendard",Georgia,serif;font-size:15px;line-height:1.55;
     -webkit-font-smoothing:antialiased}
@@ -30,7 +36,7 @@
   .mast{text-align:center;border-bottom:3px double var(--ink);padding-bottom:18px;margin-bottom:6px}
   .mast .kicker{font-family:"Spectral";font-size:.72rem;letter-spacing:.34em;text-transform:uppercase;color:var(--ink-2);margin-bottom:8px}
   .mast h1{font-family:"Playfair Display";font-weight:900;font-size:3.4rem;margin:0;letter-spacing:-.01em;line-height:1}
-  .mast h1 em{font-style:italic;font-weight:700;color:var(--accent)}
+  .mast h1 .a{color:var(--accent)}
   .dateline{display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-family:"Spectral";font-size:.78rem;color:var(--ink-2);border-top:1px solid var(--rule);padding-top:9px}
   .dateline b{color:var(--ink)} .dateline .center{letter-spacing:.18em;text-transform:uppercase;font-weight:600;font-size:.72rem}
 
@@ -88,7 +94,7 @@
   .box li .nm{font-family:"Spectral";font-style:italic;color:var(--ink-2);font-size:.78rem;margin-left:auto}
   .box li .u{color:var(--up)} .box li .d{color:var(--down)}
 
-  .colophon{margin-top:30px;border-top:3px double var(--ink);padding-top:12px;display:flex;justify-content:space-between;font-family:"Spectral";font-size:.74rem;color:var(--ink-3);font-style:italic}
+  .colophon{margin-top:30px;border-top:3px double var(--ink);padding-top:12px;display:flex;justify-content:space-between;font-family:"Spectral";font-size:.74rem;color:var(--ink-3)}
   .colophon b{color:var(--ink-2);font-style:normal;letter-spacing:.04em}
 </style>
 </head>
@@ -98,7 +104,7 @@
   <!-- MASTHEAD -->
   <div class="mast">
     <div class="kicker">Established 2026 · Markets &amp; Sentiment</div>
-    <h1>The Reddit Penny <em>Gazette</em></h1>
+    <h1>The Reddit Penny <span class="a">Gazette</span></h1>
     <div class="dateline">
       <span>2026년 7월 14일 화요일</span>
       <span class="center">Late Edition · 장중 호가 특집</span>
