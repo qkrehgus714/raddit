@@ -1,8 +1,10 @@
 // raddit 메인 대시보드 — SolidJS 컴포넌트
 // dashboard.html 1,126줄을 컴포넌트화. 모든 기능 100% 동등.
 import { createSignal, onMount, onCleanup, createMemo, Show, For } from "solid-js";
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
-import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter, ISeriesMarkersPluginApi, SeriesMarker } from "lightweight-charts";
+import { computeDivergences } from "../lib/indicators";
+import { SessionBandsPrimitive, computeIntradaySessions } from "../lib/sessionBands";
 
 // ── 상수 ──
 const FALSE_POSITIVE = new Set(["EU","IQ","RR","LINK","DC","API","LOT","ALL","PR","MA","D","ES","GL","IP","CAT","MU","ON","SO","IT","GO","AN","BE"]);
@@ -35,6 +37,16 @@ function fmtVol(v: number | null): string {
   return String(v);
 }
 function fmtPrice(v: number): string { return "$" + (Math.abs(v) < 1 ? v.toFixed(3) : v.toFixed(2)); }
+function fmtM(v: number | null | undefined): string {
+  if (v == null) return "-";
+  const sign = v < 0 ? "-" : "";
+  const a = Math.abs(v);
+  if (a >= 1e12) return sign + "$" + (a / 1e12).toFixed(2) + "T";
+  if (a >= 1e9) return sign + "$" + (a / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return sign + "$" + (a / 1e6).toFixed(1) + "M";
+  if (a >= 1e3) return sign + "$" + (a / 1e3).toFixed(1) + "K";
+  return sign + "$" + a.toFixed(0);
+}
 function rankMove(d: Row): { cls: string; txt: string } {
   if (!d.rank_24h_ago) return { cls: "new", txt: "NEW" };
   const diff = d.rank_24h_ago - d.rank;
@@ -93,6 +105,7 @@ export default function Dashboard() {
   const [chartMeta, setChartMeta] = createSignal("");
   const [chartDim, setChartDim] = createSignal(false);
   const [chartMsg, setChartMsg] = createSignal("");
+  const [showDiv, setShowDiv] = createSignal(true);
   const [bidAskPct, setBidAskPct] = createSignal<number | null>(null);
 
   // 게시물
@@ -100,6 +113,13 @@ export default function Dashboard() {
   const [redditEmpty, setRedditEmpty] = createSignal("");
   const [newsPosts, setNewsPosts] = createSignal<{title:string;publisher?:string;url?:string;ts?:number}[]>([]);
   const [newsEmpty, setNewsEmpty] = createSignal("");
+  // SEC 펀더멘털(공시·재무)
+  const [fund, setFund] = createSignal<{cik:string|null; filings:{form:string;date:string;docDesc:string|null;url:string}[]; financials:any|null} | null>(null);
+  const [fundLoading, setFundLoading] = createSignal(false);
+  const [fundError, setFundError] = createSignal("");
+  const [stSent, setStSent] = createSignal<{bullish_pct:number|null; messages:{body:string;username:string;ts:number|null;sentiment:string|null}[]; total:number; tagged:number} | null>(null);
+  const [stEmpty, setStEmpty] = createSignal("");
+  const [stEnabled, setStEnabled] = createSignal(false);
 
   // Changelog
   const [clOpen, setClOpen] = createSignal(false);
@@ -116,6 +136,8 @@ export default function Dashboard() {
   let chartContainerRef: HTMLDivElement | undefined;
   let chart: IChartApi | null = null;
   let candleSeries: ISeriesApi<"Candlestick"> | null = null;
+  let sessionBands: SessionBandsPrimitive | null = null;
+  let divMarkers: ISeriesMarkersPluginApi<any> | null = null;
   let volSeries: ISeriesApi<"Histogram"> | null = null;
   let ma20Series: ISeriesApi<"Line"> | null = null;
   let ma50Series: ISeriesApi<"Line"> | null = null;
@@ -276,6 +298,9 @@ export default function Dashboard() {
     candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
     });
+    sessionBands = new SessionBandsPrimitive(cssVar("--session-tint"));
+    candleSeries.attachPrimitive(sessionBands);
+    divMarkers = createSeriesMarkers(candleSeries, []);
     volSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", color: cssVar("--bar") });
     chart.priceScale("").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     // 오버레이(MA/BB)는 가격 스케일 자동범위 산정에서 제외 — 캔들 데이터만으로 Y축을 정해
@@ -291,7 +316,9 @@ export default function Dashboard() {
   function destroyChart() {
     if (chart) { chart.remove(); chart = null; }
     candleSeries = volSeries = ma20Series = ma50Series = bbUpSeries = bbLowSeries = null;
+    divMarkers = null;
     baselineLine = null;
+    sessionBands = null;
   }
 
   function clearChart(msg?: string) {
@@ -299,6 +326,7 @@ export default function Dashboard() {
     lastRange = null;
     lastChartData = null;
     candleSeries?.setData([]);
+    divMarkers?.setMarkers([]);
     volSeries?.setData([]);
     ma20Series?.setData([]);
     ma50Series?.setData([]);
@@ -412,6 +440,26 @@ export default function Dashboard() {
     });
     lastChartData = data;
 
+    // 이슈 #48: 분봉(min) 일 때만 미국 프리/애프터마켓 세션 음영
+    if (isMin && pts.length) {
+      sessionBands?.setSessions(computeIntradaySessions(pts[0].t, pts[pts.length - 1].t));
+    } else {
+      sessionBands?.setSessions([]);
+    }
+    // 이슈 #57: RSI/MACD 다이버전스 마커
+    const up = cssVar("--up"), down = cssVar("--down");
+    const ptsForDiv = pts.map((p: any) => ({ t: p.t, o: p.o ?? p.c, h: p.h ?? p.c, l: p.l ?? p.c, c: p.c, v: p.v ?? null }));
+    const divs = computeDivergences(ptsForDiv);
+    const markers: SeriesMarker<any>[] = divs.map((d) => ({
+      time: d.t as UTCTimestamp,
+      position: d.type === "bull" ? "belowBar" : "aboveBar",
+      shape: d.type === "bull" ? "arrowUp" : "arrowDown",
+      color: d.type === "bull" ? up : down,   // 한국식: 강세=적, 약세=청
+      text: (d.type === "bull" ? "강세" : "약세") + "다이버(" + d.oscillator + ")",
+    }));
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    divMarkers?.setMarkers(showDiv() ? markers : []);
+
     chart.timeScale().fitContent();
 
     const highs = pts.map((p: any) => p.h != null ? p.h : p.c);
@@ -448,6 +496,7 @@ export default function Dashboard() {
     clearChart();
     loadDetail();
     loadPosts(ticker);
+    loadFundamentals(ticker);
   }
 
   function closeDetail() {
@@ -511,6 +560,7 @@ export default function Dashboard() {
   async function loadPosts(ticker: string) {
     setRedditPosts([]); setRedditEmpty("불러오는 중…");
     setNewsPosts([]); setNewsEmpty("불러오는 중…");
+    setStSent(null); setStEmpty(""); setStEnabled(false);
     try {
       const res = await fetch(`/api/posts?ticker=${encodeURIComponent(ticker)}`);
       const data = await res.json();
@@ -520,10 +570,33 @@ export default function Dashboard() {
       setRedditEmpty(data.reddit_error ? "레딧 불러오기 실패 (잠시 후 다시 시도해 주세요)" : "최근 1개월 내 관련 게시물이 없습니다");
       setNewsPosts(data.news || []);
       setNewsEmpty(data.news_error ? "뉴스 불러오기 실패" : "관련 뉴스가 없습니다");
+      setStSent(data.stocktwits || null);
+      setStEnabled(!!data.st_enabled);
+      setStEmpty(data.st_error ? "StockTwits 불러오기 실패" : (data.stocktwits ? "" : "StockTwits 데이터 없음"));
     } catch (err: any) {
       if (dlgTicker() !== ticker) return;
       setRedditPosts([]); setRedditEmpty("불러오기 실패: " + err.message);
       setNewsPosts([]); setNewsEmpty("불러오기 실패: " + err.message);
+      setStSent(null); setStEmpty("불러오기 실패: " + err.message);
+    }
+  }
+
+  // ── SEC 펀더멘털(공시·재무) ── loadPosts 와 동일 패턴. EDGAR 장애는 독립.
+  async function loadFundamentals(ticker: string) {
+    setFund(null); setFundError(""); setFundLoading(true);
+    try {
+      const res = await fetch(`/api/fundamentals?ticker=${encodeURIComponent(ticker)}`);
+      const data = await res.json();
+      if (dlgTicker() !== ticker) return;
+      if (!res.ok) throw new Error(data.error || res.status);
+      setFund(data.data || null);
+      setFundError(data.error || "");
+    } catch (err: any) {
+      if (dlgTicker() !== ticker) return;
+      setFund(null);
+      setFundError("불러오기 실패: " + err.message);
+    } finally {
+      if (dlgTicker() === ticker) setFundLoading(false);
     }
   }
 
@@ -904,6 +977,7 @@ export default function Dashboard() {
             <For each={RANGES}>{([v, l]) => (
               <button class={dlgRange() === v ? "active" : ""} onClick={() => { setDlgRange(v); loadDetail(); }}>{l}</button>
             )}</For>
+            <button class={"div-toggle" + (showDiv() ? " active" : "")} onClick={() => { setShowDiv((v) => !v); if (lastChartData) drawChart(lastChartData); }}>다이버전스</button>
           </div>
           <div id="chart-wrap" classList={{ dim: chartDim() }} ref={chartWrapRef}>
             <div class="chart-canvas" ref={chartContainerRef}></div>
@@ -916,6 +990,22 @@ export default function Dashboard() {
               <div class="bidask-bar"><div class="bidask-buy" style={{ width: `${bidAskPct()}%` }}></div></div>
               <div class="bidask-label">호가 잔량 매수 {bidAskPct()!.toFixed(0)}% · 매도 {(100 - bidAskPct()!).toFixed(0)}%</div>
             </div>
+          </Show>
+          <Show when={stEnabled() && stSent()} fallback={<Show when={stEnabled() && stEmpty()}><p class="dlg-status">{stEmpty()}</p></Show>}>
+            <h3 class="dlg-sub">StockTwits 여론 <Show when={stSent()!.tagged > 0}><span class="sent-note">{stSent()!.bullish_pct!.toFixed(0)}% 매수 · {(100 - stSent()!.bullish_pct!).toFixed(0)}% 매도 (태그 {stSent()!.tagged}건)</span></Show></h3>
+            <Show when={(stSent()!.tagged ?? 0) > 0}>
+              <div class="sent-bar"><div class="sent-bull" style={{ width: `${stSent()!.bullish_pct}%` }}></div></div>
+            </Show>
+            <Show when={stSent()!.messages.length} fallback={<p class="dlg-status">최근 메시지가 없습니다</p>}>
+              <ul class="post-list">
+                <For each={stSent()!.messages}>{(m) => (
+                  <li>
+                    <span class="st-body">{m.body}</span>
+                    <span class="post-meta">{["@" + m.username, timeAgo(m.ts), m.sentiment === "Bullish" ? "매수" : m.sentiment === "Bearish" ? "매도" : null].filter(Boolean).join(" · ")}</span>
+                  </li>
+                )}</For>
+              </ul>
+            </Show>
           </Show>
           <div class="dlg-status">{dlgStatus()}</div>
           <h3 class="dlg-sub">기술적 분석</h3>
@@ -955,6 +1045,34 @@ export default function Dashboard() {
               )}</For>
             </Show>
           </ul>
+          <Show when={fundLoading()}><p class="dlg-status">재무/공시 불러오는 중…</p></Show>
+          <Show when={fundError()}><p class="dlg-status">{fundError()}</p></Show>
+          <Show when={!fundLoading()}>
+            <Show when={fund()?.cik} fallback={<p class="dlg-status">SEC 공시 의무 없음 (OTC/소형주 가능)</p>}>
+              <h3 class="dlg-sub">재무 하이라이트 <Show when={fund()?.financials?.as_of}><span class="dlg-note">{fund()!.financials!.as_of} 기준</span></Show></h3>
+              <Show when={fund()?.financials} fallback={<p class="dlg-status">재무 데이터가 없습니다</p>}>
+                <div class="ind-grid">
+                  <div class="ind"><div class="label">매출 TTM</div><div class="value">{fmtM(fund()!.financials!.revenues_ttm)}</div></div>
+                  <div class="ind"><div class="label">순이익 TTM</div><div class="value">{fmtM(fund()!.financials!.net_income_ttm)}</div></div>
+                  <div class="ind"><div class="label">총자산</div><div class="value">{fmtM(fund()!.financials!.total_assets)}</div></div>
+                  <div class="ind"><div class="label">EPS</div><div class="value">{fund()!.financials!.eps != null ? "$" + fund()!.financials!.eps.toFixed(2) : "-"}</div></div>
+                  <div class="ind"><div class="label">현금·단기투자</div><div class="value">{fmtM(fund()!.financials!.cash)}</div></div>
+                  <div class="ind"><div class="label">영업현금흐름 TTM</div><div class="value">{fmtM(fund()!.financials!.operating_cf_ttm)}</div></div>
+                </div>
+              </Show>
+              <h3 class="dlg-sub">SEC 공시</h3>
+              <Show when={(fund()?.filings.length ?? 0) > 0} fallback={<p class="dlg-status">최근 관련 공시가 없습니다</p>}>
+                <ul class="post-list">
+                  <For each={fund()!.filings}>{(f) => (
+                    <li>
+                      <a href={f.url} target="_blank" rel="noopener noreferrer">{f.form}{f.docDesc ? " · " + f.docDesc : ""}</a>
+                      <span class="post-meta">{f.date}</span>
+                    </li>
+                  )}</For>
+                </ul>
+              </Show>
+            </Show>
+          </Show>
           <p class="disclaimer">1년 일봉 기준으로 자동 계산된 참고 지표이며, 투자 판단의 근거가 아닙니다.</p>
         </div>
       </div>
