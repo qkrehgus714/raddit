@@ -73,9 +73,9 @@ export default function Dashboard() {
   const [version, setVersion] = createSignal("v0.1.0");
   const [starCount, setStarCount] = createSignal<number | null>(null);
   // 보기 모드 (목록/스크리너) — localStorage 에 저장
-  const [viewMode, setViewMode] = createSignal<"list" | "grid">(
-    typeof localStorage !== "undefined" && localStorage.getItem("raddit-view") === "grid" ? "grid" : "list"
-  );
+  // 보기 모드 (목록/스크리너) — localStorage 저장. SSR/hydration 일치를 위해
+  // 초기값은 'list' 고정, onMount 에서 localStorage 를 읽어 grid 로 전환.
+  const [viewMode, setViewMode] = createSignal<"list" | "grid">("list");
   const switchView = (m: "list" | "grid") => { setViewMode(m); try { localStorage.setItem("raddit-view", m); } catch {} };
 
   // 상세 모달
@@ -155,6 +155,9 @@ export default function Dashboard() {
       }
     }, { rootMargin: "120px" });
     io.observe(container);
+    // 카드 dispose(<Show>/<For> 교체·새로고침·뷰전환) 시 인스턴스 누수 방지 —
+    // Solid 소유권에 연결된 onCleanup (페이지 언마운트용 miniChartEls 루프는 안전망으로 유지)
+    onCleanup(() => { cancelled = true; io.disconnect(); if (chart) { chart.remove(); chart = null; } });
     miniChartEls.push(container);
     (container as any)._cleanup = () => { cancelled = true; io.disconnect(); if (chart) { chart.remove(); chart = null; } };
   }
@@ -636,6 +639,7 @@ export default function Dashboard() {
 
   // ── 생명주기 ──
   onMount(() => {
+    try { if (localStorage.getItem("raddit-view") === "grid") setViewMode("grid"); } catch {}
     load();
     fetch("/api/version").then(r => r.json()).then(d => { if (d.version) setVersion(`v${d.version}`); }).catch(() => {});
     fetch("/api/stars").then(r => r.json()).then(d => { if (d.stars != null) setStarCount(d.stars); }).catch(() => {});
@@ -776,7 +780,7 @@ export default function Dashboard() {
       <div class="board">
         <div class="board-head">
           <h2>{boardTitle()}</h2>
-          <span class="hint">열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석</span>
+          <span class="hint">{viewMode() === "list" ? "열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석" : "카드 클릭 → 실시간 차트와 분석"}</span>
         </div>
         <Show when={viewMode() === "list"}>
         <div class="scroller">
@@ -858,7 +862,7 @@ export default function Dashboard() {
                   <div class="mini-chart" ref={(el: HTMLDivElement) => mountMiniChart(el, d.ticker, lineColor)}></div>
                   <div class="srt-foot">
                     <span>언급 {d.mentions ?? 0}</span>
-                    <span>순위 {d.rank ?? "-"} <span class={mv.cls}>{mv.txt}</span></span>
+                    <span>순위 {d.rank ?? "-"} <span class={`pill ${mv.cls}`}>{mv.txt}</span></span>
                     <span>호가 {d.bidAskPct != null ? d.bidAskPct.toFixed(0) + "%" : "-"}</span>
                   </div>
                 </div>
