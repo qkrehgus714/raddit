@@ -4,6 +4,7 @@ import { createSignal, onMount, onCleanup, createMemo, Show, For } from "solid-j
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter, ISeriesMarkersPluginApi, SeriesMarker } from "lightweight-charts";
 import { computeDivergences } from "../lib/indicators";
+import { SessionBandsPrimitive, computeIntradaySessions } from "../lib/sessionBands";
 
 // ── 상수 ──
 const FALSE_POSITIVE = new Set(["EU","IQ","RR","LINK","DC","API","LOT","ALL","PR","MA","D","ES","GL","IP","CAT","MU","ON","SO","IT","GO","AN","BE"]);
@@ -113,6 +114,7 @@ export default function Dashboard() {
   let chartContainerRef: HTMLDivElement | undefined;
   let chart: IChartApi | null = null;
   let candleSeries: ISeriesApi<"Candlestick"> | null = null;
+  let sessionBands: SessionBandsPrimitive | null = null;
   let divMarkers: ISeriesMarkersPluginApi<any> | null = null;
   let volSeries: ISeriesApi<"Histogram"> | null = null;
   let ma20Series: ISeriesApi<"Line"> | null = null;
@@ -240,6 +242,8 @@ export default function Dashboard() {
     candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
     });
+    sessionBands = new SessionBandsPrimitive(cssVar("--session-tint"));
+    candleSeries.attachPrimitive(sessionBands);
     divMarkers = createSeriesMarkers(candleSeries, []);
     volSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", color: cssVar("--bar") });
     chart.priceScale("").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -258,6 +262,7 @@ export default function Dashboard() {
     candleSeries = volSeries = ma20Series = ma50Series = bbUpSeries = bbLowSeries = null;
     divMarkers = null;
     baselineLine = null;
+    sessionBands = null;
   }
 
   function clearChart(msg?: string) {
@@ -379,6 +384,12 @@ export default function Dashboard() {
     });
     lastChartData = data;
 
+    // 이슈 #48: 분봉(min) 일 때만 미국 프리/애프터마켓 세션 음영
+    if (isMin && pts.length) {
+      sessionBands?.setSessions(computeIntradaySessions(pts[0].t, pts[pts.length - 1].t));
+    } else {
+      sessionBands?.setSessions([]);
+    }
     // 이슈 #57: RSI/MACD 다이버전스 마커
     const up = cssVar("--up"), down = cssVar("--down");
     const ptsForDiv = pts.map((p: any) => ({ t: p.t, o: p.o ?? p.c, h: p.h ?? p.c, l: p.l ?? p.c, c: p.c, v: p.v ?? null }));
