@@ -171,6 +171,7 @@ export default function Dashboard() {
           // 상세모달 일간차트와 1:1 — 캔들 + RSI/MACD 다이버전스 마커
           const candle = chart.addSeries(CandlestickSeries, { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down, priceLineVisible: false, lastValueVisible: false });
           const divMk = createSeriesMarkers(candle, []);
+          candle.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 } }); // 미니 차트 위아래 꽉 채움 (납작 방지)
           fetch(`/api/spark?ticker=${encodeURIComponent(ticker)}`).then(r => r.json()).then(d => {
             if (cancelled || !chart) return;
             const pts: any[] = d.points || [];
