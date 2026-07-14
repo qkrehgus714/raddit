@@ -13,6 +13,7 @@ const detailCache = new TtlCache<DetailPayload>(300_000, 300_000);
 const dailyCache = new TtlCache<up.ChartData>(600_000, 600_000);
 const postsCache = new TtlCache<PostsPayload>(600_000, 300_000);
 const searchCache = new TtlCache<SearchPayload>(600_000, 600_000);
+const fundamentalsCache = new TtlCache<FundamentalsPayload>(600_000, 600_000);
 
 // 파이썬 서버는 PC 로컬 시간(KST)을 썼다 — 클라우드에선 UTC라 명시적으로 서울 시간 포맷
 const kstDateTime = () =>
@@ -197,6 +198,28 @@ export async function getPosts(ticker: string): Promise<PostsPayload> {
   }, {
     // 일부 실패한 응답은 짧게만 캐시 — 곧 재시도할 수 있게
     ttlFor: v => (v.reddit_error || v.news_error ? 60_000 : 600_000),
+  });
+}
+
+export interface FundamentalsPayload {
+  ticker: string;
+  data: up.Fundamentals | null;
+  error: string | null;
+  generated_at: string;
+}
+
+/** SEC EDGAR 펀더멘털(공시·재무) — getPosts 와 동일하게 독립 캐시·장애 격리.
+ *  EDGAR 장애는 error 에만 담기고 다른 패널에 영향을 주지 않는다. */
+export async function getFundamentals(ticker: string): Promise<FundamentalsPayload> {
+  return fundamentalsCache.getOrCompute(ticker, async () => {
+    try {
+      return { ticker, data: await up.fetchFundamentals(ticker), error: null, generated_at: kstTime() };
+    } catch (e: any) {
+      return { ticker, data: null, error: e?.message ?? String(e), generated_at: kstTime() };
+    }
+  }, {
+    // EDGAR 일시 장애 응답은 짧게 캐시해 곧 재시도
+    ttlFor: v => v.error ? 60_000 : 600_000,
   });
 }
 

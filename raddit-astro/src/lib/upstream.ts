@@ -25,9 +25,9 @@ const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-async function getJson(url: string): Promise<any> {
+async function getJson(url: string, init?: { headers?: Record<string, string> }): Promise<any> {
   const res = await fetch(url, {
-    headers: { "User-Agent": BROWSER_UA },
+    headers: { "User-Agent": BROWSER_UA, ...(init?.headers ?? {}) },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`업스트림 응답 ${res.status} (${new URL(url).hostname})`);
@@ -337,4 +337,170 @@ export async function searchSymbols(query: string): Promise<SymbolItem[]> {
       name: q.shortname ?? q.longname ?? null,
       exchange: q.exchDisp ?? null,
     }));
+}
+
+// ── SEC EDGAR (공시·재무제표·현금흐름) ──
+// 공식 무료 US-gov API. 식별 가능한 User-Agent 가이드라인 준수 (정책상 필수).
+// EDGAR 장애는 다른 패널에 영향을 주지 않는다 — services.getFundamentals 에서 격리.
+const SEC_UA = "raddit research admin@example.com";
+const secGet = (url: string) => getJson(url, { headers: { "User-Agent": SEC_UA } });
+
+const TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
+const submissionsUrl = (cik10: string) => `https://data.sec.gov/submissions/CIK${cik10}.json`;
+const companyFactsUrl = (cik10: string) => `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik10}.json`;
+
+// company_tickers.json 캐시 — 모듈 수준, 6h TTL (티커→CIK 매핑은 거의 안 바뀜)
+let tickersCache: { at: number; map: Map<string, string> } | null = null;
+const TICKERS_TTL_MS = 6 * 3600_000;
+
+async function getTickerMap(): Promise<Map<string, string>> {
+  if (tickersCache && Date.now() - tickersCache.at < TICKERS_TTL_MS) return tickersCache.map;
+  const data = await secGet(TICKERS_URL);
+  const map = new Map<string, string>();
+  for (const k of Object.keys(data || {})) {
+    const row = data[k];
+    if (row && row.ticker && row.cik_str != null) {
+      map.set(String(row.ticker).toUpperCase(), String(row.cik_str).padStart(10, "0"));
+    }
+  }
+  tickersCache = { at: Date.now(), map };
+  return map;
+}
+
+/** 티커 → 10자리 CIK 문자열(0 채움). EDGAR 미등록(OTC/소형주)이면 null.
+ *  네트워크 오류는 throw (상위 getFundamentals 가 잡아 격리). */
+export async function tickerToCik(ticker: string): Promise<string | null> {
+  const map = await getTickerMap();
+  return map.get(ticker.toUpperCase()) ?? null;
+}
+
+export interface SecFiling {
+  form: string; date: string; docDesc: string | null; url: string;
+}
+export interface SecFinancials {
+  revenues_ttm: number | null;
+  net_income_ttm: number | null;
+  total_assets: number | null;
+  eps: number | null;
+  cash: number | null;            // 현금 + 단기투자
+  operating_cf_ttm: number | null;
+  as_of: string | null;           // 가장 최근 fact 기준일 (YYYY-MM-DD)
+}
+export interface Fundamentals {
+  cik: string | null;
+  filings: SecFiling[];           // 관련 form(8-K/10-Q/10-K/S-1/SC13) 최근 8건
+  financials: SecFinancials | null;
+}
+
+// 레딧 워치보드 관심 공시 — 내부자 거래(Form 4) 등 노이즈 제거
+const RELEVANT_FORMS = ["8-K", "10-K", "10-Q", "S-1", "SC 13D", "SC 13G"];
+const isRelevantForm = (form: string) =>
+  RELEVANT_FORMS.some(b => form === b || form.startsWith(b + "/"));
+
+/** us-gaap fact 에서 최근값 추출. preferAnnual=true 면 FY(연간) 우선(TTM 근사),
+ *  FY 가 없으면 최근 end 기준. 값/단위가 없으면 null. */
+function latestFact(
+  cf: any, tag: string, unit: string, preferAnnual = false,
+): { end: string; val: number } | null {
+  const arr = cf?.facts?.["us-gaap"]?.[tag]?.units?.[unit];
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  const num = arr.filter((f: any) => typeof f?.val === "number");
+  if (num.length === 0) return null;
+  const byEndDesc = (a: any, b: any) =>
+    a.end < b.end ? 1 : a.end > b.end ? -1 : (b.start ?? "").localeCompare(a.start ?? "");
+  if (preferAnnual) {
+    const fy = num.filter((f: any) => f.fp === "FY").sort(byEndDesc);
+    if (fy.length) return { end: fy[0].end, val: fy[0].val };
+  }
+  const top = num.slice().sort(byEndDesc)[0];
+  return { end: top.end, val: top.val };
+}
+
+/** 여러 후보 태그 중 가장 최근 end 의 fact 선택 — 'Revenues' 가 과거에만
+ *  보고된 발행사(Apple 등)에서 fallback 태그의 최신값이 이기게 한다. */
+function latestAmong(
+  cf: any, tags: string[], unit: string, preferAnnual = false,
+): { end: string; val: number } | null {
+  let best: { end: string; val: number } | null = null;
+  for (const tag of tags) {
+    const f = latestFact(cf, tag, unit, preferAnnual);
+    if (f && (!best || f.end > best.end)) best = f;
+  }
+  return best;
+}
+
+/**
+ * SEC EDGAR 펀더멘털 조회 — 최근 관련 공시 + 재무 하이라이트(XBRL).
+ * CIK 미등록(OTC/소형주)이면 {cik:null,...} 반환. 네트워크 오류는 throw.
+ * submissions/companyfacts 각각 독립 try/catch — 한쪽 실패해도 다른쪽은 채운다.
+ */
+export async function fetchFundamentals(ticker: string): Promise<Fundamentals | null> {
+  const cik = await tickerToCik(ticker);
+  if (!cik) return { cik: null, filings: [], financials: null };
+
+  // 1) 공시 — submissions.filings.recent 에서 관련 form 최근 8건
+  let filings: SecFiling[] = [];
+  try {
+    const sub = await secGet(submissionsUrl(cik));
+    const r = sub?.filings?.recent;
+    if (r && Array.isArray(r.form)) {
+      const cikInt = String(parseInt(cik, 10));
+      const forms: any[] = r.form;
+      const acc: any[] = r.accessionNumber ?? [];
+      const dates: any[] = r.filingDate ?? [];
+      const pdocs: any[] = r.primaryDocument ?? [];
+      const pdesc: any[] = r.primaryDocDescription ?? [];
+      for (let i = 0; i < forms.length && filings.length < 8; i++) {
+        const form = String(forms[i] ?? "");
+        if (!isRelevantForm(form)) continue;
+        const accession = acc[i];
+        const pdoc = pdocs[i];
+        if (!accession || !pdoc) continue;
+        filings.push({
+          form,
+          date: dates[i] ? String(dates[i]) : "",
+          docDesc: pdesc[i] ? String(pdesc[i]) : null,
+          url: `https://www.sec.gov/Archives/edgar/data/${cikInt}/${String(accession).replace(/-/g, "")}/${pdoc}`,
+        });
+      }
+    }
+  } catch {
+    // submissions 실패 — 공시 빈 목록. 재무는 계속 시도.
+  }
+
+  // 2) 재무 — companyfacts XBRL 최근값 (us-gaap)
+  let financials: SecFinancials | null = null;
+  try {
+    const cf = await secGet(companyFactsUrl(cik));
+    // 매출/순이익: 동일 의미의 여러 us-gaap 태그 중 가장 최근 end 채택.
+    //   'Revenues' 는 Apple 등에서 과거에만 보고 — fallback 태그의 최신값이 우선.
+    const rev = latestAmong(cf,
+      ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"], "USD", true);
+    const ni = latestAmong(cf,
+      ["NetIncomeLoss", "ProfitLoss"], "USD", true);
+    const assets = latestFact(cf, "Assets", "USD", false);
+    const eps = latestFact(cf, "EarningsPerShareBasic", "USD/shares", true);
+    const cashF = latestFact(cf, "CashAndCashEquivalentsAtCarryingValue", "USD", false);
+    const stiF = latestFact(cf, "ShortTermInvestments", "USD", false);
+    const ocf = latestFact(cf, "NetCashProvidedByUsedInOperatingActivities", "USD", true);
+
+    if (rev || ni || assets || eps || cashF || ocf) {
+      const cashVal = (cashF?.val ?? 0) + (stiF?.val ?? 0);
+      const ends = [rev, ni, assets, eps, cashF, stiF, ocf]
+        .map(f => f?.end ?? "").filter(Boolean).sort();
+      financials = {
+        revenues_ttm: rev?.val ?? null,
+        net_income_ttm: ni?.val ?? null,
+        total_assets: assets?.val ?? null,
+        eps: eps?.val ?? null,
+        cash: (cashF?.val != null || stiF?.val != null) ? cashVal : null,
+        operating_cf_ttm: ocf?.val ?? null,
+        as_of: ends.length ? ends[ends.length - 1] : null,
+      };
+    }
+  } catch {
+    // companyfacts 실패 — 재무 null
+  }
+
+  return { cik, filings, financials };
 }
