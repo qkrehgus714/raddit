@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup B — Trader Terminal (다크 밀집)</title>
+<style>
+  :root{
+    --bg:#0b0e12; --panel:#12161c; --panel2:#171c24; --line:#232a35; --line2:#1c222b;
+    --ink:#e6e9ee; --ink-2:#9aa3b2; --ink-3:#636d7e;
+    --accent:#f0b429; --accent-soft:#2a2410;
+    --up:#ff4d5e; --up-bg:rgba(255,77,94,.16); --down:#3d8bff; --down-bg:rgba(61,139,255,.16);
+    --bar:#f0b429;
+    --mono:"JetBrains Mono","SF Mono",Consolas,ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:var(--mono);font-size:13px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1240px;margin:0 auto;padding:20px 22px 50px}
+
+  /* ticker tape */
+  .tape{display:flex;gap:26px;overflow:hidden;white-space:nowrap;
+    border-bottom:1px solid var(--line);padding:8px 0;color:var(--ink-2);font-size:12px}
+  .tape span b{color:var(--ink)} .tape .u{color:var(--up)} .tape .d{color:var(--down)}
+
+  /* header */
+  .top{display:flex;align-items:center;gap:14px;margin:16px 0}
+  .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#000;
+    display:grid;place-items:center;font-weight:800}
+  h1{font-size:1.05rem;margin:0;letter-spacing:.02em;font-weight:700}
+  .tag{font-size:11px;color:var(--ink-3);border:1px solid var(--line);padding:2px 8px;border-radius:4px;
+    font-family:var(--mono)}
+  .tag.live::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--up);
+    margin-right:6px;animation:bl 1.2s infinite}
+  @keyframes bl{50%{opacity:.3}}
+  .top-right{margin-left:auto;display:flex;gap:6px}
+  .seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .seg button{background:transparent;border:0;color:var(--ink-2);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}
+  .seg button.on{background:var(--accent);color:#000;font-weight:700}
+  .ic{width:30px;height:30px;border:1px solid var(--line);background:var(--panel);border-radius:7px;color:var(--ink-2);cursor:pointer}
+
+  /* controls */
+  .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+  .fld{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);
+    border-radius:7px;padding:5px 9px;font-size:12px;color:var(--ink-2)}
+  .fld select,.fld input{background:transparent;border:0;color:var(--ink);font:inherit;font-size:12px;outline:none}
+  .fld b{color:var(--accent);font-weight:600}
+
+  /* stat strip */
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:16px}
+  .stat{background:var(--panel);padding:11px 14px}
+  .stat .l{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+  .stat .v{font-size:1.3rem;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+  .stat .v.u{color:var(--up)} .stat .v.d{color:var(--down)}
+  .stat .n{font-size:11px;color:var(--ink-2);margin-top:1px}
+
+  /* board */
+  .board{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel)}
+  .bhead{display:flex;justify-content:space-between;padding:11px 16px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  .bhead h2{margin:0;font-size:13px;font-weight:700}
+  .bhead .h{color:var(--ink-3);font-size:11px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  thead th{text-align:right;font-weight:600;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--ink-3);padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer}
+  thead th:hover{color:var(--accent)}
+  thead th.l{text-align:left}
+  tbody td{padding:8px 12px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  tbody tr:hover{background:rgba(240,180,41,.06)}
+  td.l{text-align:left} td.dim{color:var(--ink-2)}
+  .tk{font-weight:700;color:var(--ink)}
+  .nm{color:var(--ink-3);font-size:11px;margin-left:5px}
+  /* heat change */
+  .chg{display:inline-block;padding:2px 7px;border-radius:4px;font-weight:600;font-variant-numeric:tabular-nums}
+  .chg.u{color:var(--up);background:var(--up-bg)} .chg.d{color:var(--down);background:var(--down-bg)} .chg.f{color:var(--ink-3)}
+  /* bidask stacked */
+  .ba{width:120px;display:inline-block}
+  .ba .stack{height:6px;border-radius:3px;overflow:hidden;display:flex;background:var(--down-bg)}
+  .ba .buy{background:var(--up)}
+  .ba .lbl{display:flex;justify-content:space-between;font-size:10.5px;margin-top:2px;color:var(--ink-2)}
+  .ba .lbl b{color:var(--up);font-weight:600}
+  .ba.thin .lbl b{color:var(--ink-3)}
+  /* mentions */
+  .mc{display:inline-flex;align-items:center;gap:6px;justify-content:flex-end}
+  .mc .trk{width:60px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+  .mc .fl{height:100%;background:var(--bar)}
+  .mv{font-size:11px} .mv.u{color:var(--up)} .mv.d{color:var(--down)} .mv.n{color:var(--accent)}
+  .foot{margin-top:14px;font-size:11px;color:var(--ink-3);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="tape">
+    <span><b>AMC</b> 1.87 <span class="u">+6.8%</span></span>
+    <span><b>HTZ</b> 1.83 <span class="d">-8.7%</span></span>
+    <span><b>BATL</b> 1.89 <span class="u">+12.4%</span></span>
+    <span><b>WTI</b> 3.55 <span class="d">-4.2%</span></span>
+    <span><b>IQ</b> 1.13 <span class="d">-2.8%</span></span>
+    <span><b>OPEN</b> 4.49 <span class="u">+2.1%</span></span>
+    <span><b>EU</b> 1.22 <span class="u">+15.3%</span></span>
+    <span><b>DC</b> 4.34 <span class="u">+1.5%</span></span>
+  </div>
+  <div class="top">
+    <div class="logo">▚</div>
+    <h1>RADDIT TERMINAL</h1>
+    <span class="tag live">LIVE</span>
+    <span class="tag">14:32 KST</span>
+    <div class="top-right">
+      <div class="seg"><button class="on">LIST</button><button>GRID</button></div>
+      <button class="ic">◐</button>
+      <button class="ic">↻</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="fld">SUB <select><option>all-stocks</option></select></div>
+    <div class="fld">PENNY <b>≤ $5</b></div>
+    <div class="fld">SORT <select><option>mentions ↓</option></select></div>
+    <div class="fld">SEARCH <input placeholder="ticker…" style="width:90px"></div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="l">SCAN</div><div class="v">751</div><div class="n">17 페니</div></div>
+    <div class="stat"><div class="l">AVG CHG</div><div class="v u">+3.2%</div><div class="n">11U / 6D</div></div>
+    <div class="stat"><div class="l">TOP VOL</div><div class="v">AMC</div><div class="n">18.2M</div></div>
+    <div class="stat"><div class="l">AVG BID</div><div class="v">47%</div><div class="n">매수 우위</div></div>
+    <div class="stat"><div class="l">GAINERS</div><div class="v u">11</div><div class="n">/17</div></div>
+  </div>
+
+  <div class="board">
+    <div class="bhead"><h2>▣ PENNY STOCKS · $5 MAX</h2><span class="h">14:32:05 · auto 2m</span></div>
+    <table>
+      <thead><tr>
+        <th class="l">#</th><th class="l">SYMBOL</th><th>LAST</th><th>CHG%</th><th>BID/ASK</th>
+        <th>MENT(24h)</th><th>UPV</th><th>ΔRANK</th><th>VOL</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="dim l">001</td><td class="l"><span class="tk">AMC</span><span class="nm">AMC Ent.</span></td><td>1.87</td><td><span class="chg u">+6.80</span></td><td><div class="ba"><div class="stack"><div class="buy" style="width:49%"></div></div><div class="lbl"><b>49%</b><span>51%</span></div></div></td><td><span class="mc"><span class="trk"><span class="fl" style="width:100%"></span></span><b>874</b></span></td><td class="dim">42000</td><td><span class="mv u">▲001</span></td><td class="dim">18.2M</td></tr>
+        <tr><td class="dim l">002</td><td class="l"><span class="tk">HTZ</span><span class="nm">Hertz</span></td><td>1.83</td><td><span class="chg d">-8.70</span></td><td><div class="ba thin"><div class="stack"><div class="buy" style="width:29%"></div></div><div class="lbl"><b>29%</b><span>71%</span></div></div></td><td><span class="mc"><span class="trk"><span class="fl" style="width:23%"></span></span><b>203</b></span></td><td class="dim">11000</td><td><span class="mv u">▲045</span></td><td class="dim">9.8M</td></tr>
+        <tr><td class="dim l">003</td><td class="l"><span class="tk">IQ</span><span class="nm">iQIYI</span></td><td>1.13</td><td><span class="chg d">-2.80</span></td><td><div class="ba thin"><div class="stack"><div class="buy" style="width:50%"></div></div><div class="lbl"><b>50%</b><span>50%</span></div></div></td><td><span class="mc"><span class="trk"><span class="fl" style="width:36%"></span></span><b>312</b></span></td><td class="dim">14000</td><td><span class="mv d">▼006</span></td><td class="dim">5.6M</td></tr>
+        <tr><td class="dim l">004</td><td class="l"><span class="tk">BATL</span><span class="nm">Battalion Oil</span></td><td>1.89</td><td><span class="chg u">+12.40</span></td><td><div class="ba"><div class="stack"><div class="buy" style="width:68%"></div></div><div class="lbl"><b>68%</b><span>32%</span></div></div></td><td><span class="mc"><span class="trk"><span class="fl" style="width:16%"></span></span><b>142</b></span></td><td class="dim">8900</td><td><span class="mv u">▲012</span></td><td class="dim">1.2M</td></tr>
+        <tr><td class="dim l">005</td><td class="l"><span class="tk">WTI</span><span class="nm">W&T Offshore</span></td><td>3.55</td><td><span class="chg d">-4.20</span></td><td><div class="ba"><div class="stack"><div class="buy" style="width:44%"></div></div><div class="lbl"><b>44%</b><span>56%</span></div></div></td><td><span class="mc"><span class="trk"><span class="fl" style="width:11%"></span></span><b>98</b></span></td><td class="dim">5400</td><td><span class="mv d">▼003</span></td><td class="dim">2.1M</td></tr>
+        <tr><td class="dim l">006</td><td class="l"><span class="tk">OPEN</span><span class="nm">Opendoor</span></td><td>4.49</td><td><span class="chg u">+2.10</span></td><td><div class="ba thin"><div class="stack"><div class="buy" style="width:50%"></div></div><div class="lbl"><b>50%</b><span>50%</span></div></div></td><td><span class="mc"><span class="trk"><span class="fl" style="width:6%"></span></span><b>56</b></span></td><td class="dim">2100</td><td><span class="mv n">NEW</span></td><td class="dim">3.4M</td></tr>
+        <tr><td class="dim l">007</td><td class="l"><span class="tk">EU</span><span class="nm">Envela</span></td><td>1.22</td><td><span class="chg u">+15.30</span></td><td><div class="ba thin"><div class="stack"><div class="buy" style="width:33%"></div></div><div class="lbl"><b>33%</b><span>67%</span></div></div></td><td><span class="mc"><span class="trk"><span class="fl" style="width:3%"></span></span><b>27</b></span></td><td class="dim">680</td><td><span class="mv u">▲022</span></td><td class="dim">180K</td></tr>
+        <tr><td class="dim l">008</td><td class="l"><span class="tk">DC</span><span class="nm">Discovery Silver</span></td><td>4.34</td><td><span class="chg u">+1.50</span></td><td><div class="ba"><div class="stack"><div class="buy" style="width:54%"></div></div><div class="lbl"><b>54%</b><span>46%</span></div></div></td><td><span class="mc"><span class="trk"><span class="fl" style="width:4%"></span></span><b>34</b></span></td><td class="dim">1200</td><td><span class="mv d">▼008</span></td><td class="dim">420K</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="foot">Mockup B · Trader Terminal — 다크/모노스페이스/밀집/히트맵 등락/호가 스택바</p>
+</div>
+</body>
+</html>

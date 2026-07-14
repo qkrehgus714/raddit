@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup C — Minimal Airy (여백 중심)</title>
+<style>
+  :root{
+    --bg:#ffffff; --card:#ffffff; --line:#eef0f3; --line2:#f5f6f8;
+    --ink:#15181d; --ink-2:#5a6472; --ink-3:#9aa3b2;
+    --accent:#0a8f6f; --accent-soft:#e8f7f2;
+    --up:#d4383e; --up-soft:#fbeaea; --down:#2f6fdd; --down-soft:#e9f0fc;
+    --bar:#0a8f6f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Inter","Pretendard","Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.55;font-size:14px}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 32px 64px}
+
+  .top{display:flex;align-items:baseline;gap:12px}
+  h1{font-size:1.5rem;font-weight:700;margin:0;letter-spacing:-.02em}
+  .live{font-size:.82rem;color:var(--ink-3);display:inline-flex;align-items:center;gap:6px}
+  .live .d{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+  .top-right{margin-left:auto;display:flex;gap:8px}
+  .lk{font-size:.82rem;color:var(--ink-2);background:transparent;border:1px solid var(--line);
+    padding:6px 12px;border-radius:8px;cursor:pointer}
+  .lk.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .desc{color:var(--ink-3);font-size:.86rem;margin:8px 0 0}
+
+  .divider{height:1px;background:var(--line);margin:32px 0 24px}
+
+  /* controls — very clean */
+  .controls{display:flex;gap:24px;align-items:center;margin-bottom:28px;flex-wrap:wrap}
+  .controls .grp{display:flex;align-items:center;gap:8px;font-size:.84rem;color:var(--ink-2)}
+  .controls select,.controls input{font:inherit;border:0;border-bottom:1px solid var(--line);
+    background:transparent;padding:3px 2px;color:var(--ink);outline:none;font-size:.86rem;font-weight:500}
+  .controls select:focus,.controls input:focus{border-bottom-color:var(--accent)}
+  .sw{display:inline-flex;align-items:center;gap:7px;font-size:.84rem;color:var(--ink)}
+  .sw .tg{width:34px;height:20px;border-radius:99px;background:var(--accent);position:relative;cursor:pointer}
+  .sw .tg::after{content:"";position:absolute;left:16px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.2s}
+
+  /* summary line */
+  .summary{display:flex;gap:40px;margin-bottom:30px;flex-wrap:wrap}
+  .s{display:flex;flex-direction:column}
+  .s .l{font-size:.74rem;color:var(--ink-3);margin-bottom:3px}
+  .s .v{font-size:1.5rem;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .s .v.u{color:var(--up)} .s .v.d{color:var(--down)}
+
+  /* table — airy, hairline, generous */
+  .scroller{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  thead th{text-align:right;font-weight:600;font-size:.74rem;color:var(--ink-3);
+    padding:14px 16px;border-bottom:1px solid var(--line);white-space:nowrap;letter-spacing:.02em}
+  thead th:first-child,thead th:nth-child(2){text-align:left}
+  tbody td{padding:18px 16px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  tbody tr{transition:background .12s}
+  tbody tr:hover{background:#fafbfc}
+  td.l{text-align:left}
+  .tk{font-weight:700;font-size:.92rem}
+  .nm{display:block;color:var(--ink-3);font-size:.8rem;margin-top:1px}
+  .chg{font-weight:600} .chg.u{color:var(--up)} .chg.d{color:var(--down)} .chg.f{color:var(--ink-3)}
+  .newdot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:1px}
+  /* subtle bidask */
+  .ba{display:inline-flex;align-items:center;gap:9px}
+  .ba .n{font-weight:600;min-width:2ch;color:var(--ink)}
+  .ba .ln{width:42px;height:4px;border-radius:99px;background:var(--down);overflow:hidden;opacity:.85}
+  .ba .ln i{display:block;height:100%;background:var(--up)}
+  .ba.thin{opacity:.4}
+  /* mention dot scale */
+  .mc{display:inline-flex;align-items:center;gap:8px}
+  .mc .d{width:4px;height:4px;border-radius:50%;background:var(--accent)}
+  .mc b{font-weight:600}
+  .mv{font-size:.86rem} .mv.u{color:var(--up)} .mv.d{color:var(--down)} .mv.n{color:var(--accent)}
+  .foot{margin-top:40px;font-size:.8rem;color:var(--ink-3)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>레딧 페니주식</h1>
+    <span class="live"><span class="d"></span>14:32 업데이트</span>
+    <div class="top-right">
+      <button class="lk on">목록</button>
+      <button class="lk">스크리너</button>
+    </div>
+  </div>
+  <p class="desc">Reddit 주요 금융 서브레딧 언급량 기준 · 실시간 스캔</p>
+
+  <div class="divider"></div>
+
+  <div class="controls">
+    <div class="grp">서브레딧 <select><option>전체</option></select></div>
+    <div class="sw"><span class="tg"></span> $5 이하만</span></div>
+    <div class="grp">정렬 <select><option>언급 많은순</option></select></div>
+  </div>
+
+  <div class="summary">
+    <div class="s"><span class="l">스캔</span><span class="v">751</span></div>
+    <div class="s"><span class="l">페니 필터</span><span class="v">17</span></div>
+    <div class="s"><span class="l">평균 등락</span><span class="v u">+3.2%</span></div>
+    <div class="s"><span class="l">상승 / 하락</span><span class="v">11 / 6</span></div>
+  </div>
+
+  <div class="scroller">
+    <table>
+      <thead><tr>
+        <th>#</th><th>종목</th><th>현재가</th><th>등락</th><th>호가 매수</th>
+        <th>언급 24h</th><th>업보트</th><th>순위</th><th>거래량</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="l">1</td><td class="l"><span class="tk">AMC</span><span class="nm">AMC 엔터테인먼트</span></td><td>$1.87</td><td><span class="chg u">+6.8%</span></td><td><div class="ba"><span class="n">49</span><span class="ln"><i style="width:49%"></i></span></div></td><td><div class="mc"><span class="d"></span><b>874</b></div></td><td>42,000</td><td><span class="mv u">▲ 1</span></td><td>18.2M</td></tr>
+        <tr><td class="l">2</td><td class="l"><span class="tk">HTZ</span><span class="nm">허츠 글로벌</span></td><td>$1.83</td><td><span class="chg d">-8.7%</span></td><td><div class="ba thin"><span class="n">29</span><span class="ln"><i style="width:29%"></i></span></div></td><td><div class="mc"><span class="d"></span><b>203</b></div></td><td>11,000</td><td><span class="mv u">▲ 45</span></td><td>9.8M</td></tr>
+        <tr><td class="l">3</td><td class="l"><span class="tk">IQ</span><span class="nm">아이치이이</span></td><td>$1.13</td><td><span class="chg d">-2.8%</span></td><td><div class="ba thin"><span class="n">50</span><span class="ln"><i style="width:50%"></i></span></div></td><td><div class="mc"><span class="d"></span><b>312</b></div></td><td>14,000</td><td><span class="mv d">▼ 6</span></td><td>5.6M</td></tr>
+        <tr><td class="l">4</td><td class="l"><span class="tk">BATL</span><span class="nm">배탈리언 오일</span></td><td>$1.89</td><td><span class="chg u">+12.4%</span></td><td><div class="ba"><span class="n">68</span><span class="ln"><i style="width:68%"></i></span></div></td><td><div class="mc"><span class="d"></span><b>142</b></div></td><td>8,900</td><td><span class="mv u">▲ 12</span></td><td>1.2M</td></tr>
+        <tr><td class="l">5</td><td class="l"><span class="tk">WTI</span><span class="nm">W&T 오프쇼어</span></td><td>$3.55</td><td><span class="chg d">-4.2%</span></td><td><div class="ba"><span class="n">44</span><span class="ln"><i style="width:44%"></i></span></div></td><td><div class="mc"><span class="d"></span><b>98</b></div></td><td>5,400</td><td><span class="mv d">▼ 3</span></td><td>2.1M</td></tr>
+        <tr><td class="l">6</td><td class="l"><span class="tk">OPEN</span><span class="nm">오픈도어</span></td><td>$4.49</td><td><span class="chg u">+2.1%</span></td><td><div class="ba thin"><span class="n">50</span><span class="ln"><i style="width:50%"></i></span></div></td><td><div class="mc"><span class="d"></span><b>56</b></div></td><td>2,100</td><td><span class="mv n"><span class="newdot"></span>신규</span></td><td>3.4M</td></tr>
+        <tr><td class="l">7</td><td class="l"><span class="tk">EU</span><span class="nm">엔벨라</span></td><td>$1.22</td><td><span class="chg u">+15.3%</span></td><td><div class="ba thin"><span class="n">33</span><span class="ln"><i style="width:33%"></i></span></div></td><td><div class="mc"><span class="d"></span><b>27</b></div></td><td>680</td><td><span class="mv u">▲ 22</span></td><td>180K</td></tr>
+        <tr><td class="l">8</td><td class="l"><span class="tk">DC</span><span class="nm">디스커버리 실버</span></td><td>$4.34</td><td><span class="chg u">+1.5%</span></td><td><div class="ba"><span class="n">54</span><span class="ln"><i style="width:54%"></i></span></div></td><td><div class="mc"><span class="d"></span><b>34</b></div></td><td>1,200</td><td><span class="mv d">▼ 8</span></td><td>420K</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="foot">Mockup C · Minimal Airy — 큰 여백/얇은 구분선/은은 색/드물게 그린 액센트</p>
+</div>
+</body>
+</html>

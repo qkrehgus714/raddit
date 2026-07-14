@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup A — Refined Modern (개선안)</title>
+<style>
+  :root{
+    --bg:#f7f5f0; --card:#ffffff; --line:#ece7dc; --line2:#f1ede4;
+    --ink:#1b1813; --ink-2:#5b5547; --ink-3:#9a9180;
+    --accent:#9a6408; --accent-soft:#f6edd6;
+    --up:#d4383e; --up-soft:#fbe9e9; --down:#2f6fdd; --down-soft:#e9f0fc;
+    --bar:#c9971f;
+    --shadow:0 1px 2px rgba(40,32,16,.04),0 8px 24px rgba(40,32,16,.06);
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Pretendard","Segoe UI","Apple SD Gothic Neo",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 24px 56px}
+
+  /* header */
+  .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:11px}
+  .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#c08718,#7a4e06);
+    display:grid;place-items:center;color:#fff;font-weight:800;font-size:.95rem;box-shadow:var(--shadow)}
+  h1{font-size:1.35rem;font-weight:750;margin:0;letter-spacing:-.015em}
+  .live{display:inline-flex;align-items:center;gap:7px;margin-left:2px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--up);box-shadow:0 0 0 0 rgba(212,56,62,.5);
+    animation:pulse 1.6s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(212,56,62,.45)}70%{box-shadow:0 0 0 7px rgba(212,56,62,0)}100%{box-shadow:0 0 0 0 rgba(212,56,62,0)}}
+  .live small{color:var(--ink-3);font-size:.78rem}
+  .top-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .view-toggle{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px;box-shadow:var(--shadow)}
+  .view-toggle button{border:0;background:transparent;font:inherit;font-size:.82rem;color:var(--ink-2);
+    padding:6px 13px;border-radius:7px;cursor:pointer;font-weight:600}
+  .view-toggle button.on{background:var(--accent-soft);color:var(--accent)}
+  .icon-btn{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--card);
+    cursor:pointer;font-size:1rem;box-shadow:var(--shadow);color:var(--ink-2)}
+  .icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .sub{color:var(--ink-3);font-size:.82rem;margin:7px 0 0 50px}
+
+  /* controls */
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:20px 0 18px}
+  .controls label{font-size:.78rem;color:var(--ink-2);display:flex;align-items:center;gap:7px}
+  .pill-in,.sel{font:inherit;font-size:.84rem;background:var(--card);border:1px solid var(--line);
+    border-radius:9px;padding:7px 11px;color:var(--ink)}
+  .chip{font-size:.74rem;font-weight:650;padding:5px 11px;border-radius:99px;border:1px solid var(--line);
+    background:var(--card);cursor:pointer;color:var(--ink-2)}
+  .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .chk{display:inline-flex;gap:6px;align-items:center;font-size:.8rem;color:var(--ink-2)}
+
+  /* tiles */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:22px}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .tile .label{font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3);margin-bottom:7px;font-weight:600}
+  .tile .value{font-size:1.7rem;font-weight:760;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+  .tile .note{font-size:.78rem;color:var(--ink-2);margin-top:5px;font-variant-numeric:tabular-nums}
+  .tile .spark{position:absolute;right:14px;bottom:14px;opacity:.5}
+  .skel{background:linear-gradient(90deg,var(--line2) 25%,#f6f2e8 37%,var(--line2) 63%);background-size:400% 100%;animation:sh 1.3s infinite;border-radius:6px}
+  @keyframes sh{0%{background-position:100% 0}100%{background-position:-100% 0}}
+
+  /* board */
+  .board{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+  .board-head{display:flex;justify-content:space-between;align-items:center;padding:15px 20px;border-bottom:1px solid var(--line)}
+  .board-head h2{font-size:.98rem;font-weight:700;margin:0}
+  .board-head .hint{font-size:.76rem;color:var(--ink-3)}
+  .scroller{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:940px;font-size:.86rem}
+  thead th{text-align:right;font-weight:650;font-size:.7rem;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--ink-3);padding:11px 14px;border-bottom:1px solid var(--line);background:var(--card);
+    position:sticky;top:0;white-space:nowrap;cursor:pointer}
+  thead th:hover{color:var(--accent)}
+  thead th.left{text-align:left}
+  tbody td{padding:11px 14px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr{transition:background .12s}
+  tbody tr:hover{background:var(--accent-soft)}
+  td.left{text-align:left}
+  td.dim{color:var(--ink-2)}
+  .tk{font-weight:720;font-size:.9rem;font-family:"JetBrains Mono",Consolas,monospace}
+  .name{color:var(--ink-2);font-size:.8rem}
+  .pill-c{display:inline-block;min-width:54px;text-align:center;font-size:.78rem;font-weight:700;padding:3px 9px;border-radius:7px;font-variant-numeric:tabular-nums}
+  .up{color:var(--up);background:var(--up-soft)} .down{color:var(--down);background:var(--down-soft)} .flat{color:var(--ink-2);background:transparent;border:1px solid var(--line)} .new{color:var(--accent);background:var(--accent-soft)}
+  /* bidask */
+  .ba{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+  .ba .bar{width:56px;height:7px;border-radius:4px;background:var(--down);overflow:hidden}
+  .ba .buy{height:100%;background:var(--up)}
+  .ba.thin{opacity:.42}
+  .ba .n{font-size:.8rem;font-weight:680;min-width:2ch;text-align:right}
+  /* mentions */
+  .mc{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+  .mc .track{width:84px;height:7px;border-radius:4px;background:var(--line);overflow:hidden}
+  .mc .fill{height:100%;background:var(--bar);border-radius:4px}
+  .mc .nm{font-weight:680;min-width:2ch}
+  .mv{font-size:.82rem;font-weight:600}
+  .mv.up{color:var(--up)} .mv.down{color:var(--down)}
+  .footer-note{margin-top:18px;font-size:.76rem;color:var(--ink-3);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">
+      <div class="logo">R</div>
+      <div>
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <h1>레딧 페니주식 워치보드</h1>
+          <span class="live"><span class="dot"></span><small>실시간 · 14:32 KST</small></span>
+        </div>
+      </div>
+    </div>
+    <div class="top-right">
+      <div class="view-toggle">
+        <button class="on">목록</button>
+        <button>스크리너</button>
+      </div>
+      <button class="icon-btn" title="다크모드">🌙</button>
+      <button class="icon-btn" title="새로고침">↻</button>
+    </div>
+  </div>
+  <p class="sub">r/wallstreetbets · r/pennystocks · r/stocks · r/investing 집계 — 751개 티커 스캔</p>
+
+  <div class="controls">
+    <label>서브레딧
+      <select class="sel"><option>전체 (all-stocks)</option><option>r/wallstreetbets</option></select>
+    </label>
+    <span class="chk"><input type="checkbox" checked> $5 이하 페니주식</span>
+    <input class="pill-in" style="width:120px" value="$5" />
+    <span style="margin-left:auto" class="hint" style="font-size:.76rem;color:var(--ink-3)">2분마다 자동 새로고침</span>
+  </div>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="label">스캔 종목</div>
+      <div class="value">751</div>
+      <div class="note">페니 필터 <b>17</b>건</div>
+    </div>
+    <div class="tile">
+      <div class="label">평균 등락</div>
+      <div class="value up" style="color:var(--up)">+3.2<small style="font-size:1rem">%</small></div>
+      <div class="note">상승 11 · 하락 6</div>
+    </div>
+    <div class="tile">
+      <div class="label">최다 언급</div>
+      <div class="value">AMC</div>
+      <div class="note">874회 · 업보트 42K</div>
+    </div>
+    <div class="tile">
+      <div class="label">평균 매수 호가</div>
+      <div class="value">47<small style="font-size:1rem">%</small></div>
+      <div class="note skel" style="height:1.4rem">&nbsp;</div>
+    </div>
+  </div>
+
+  <div class="board">
+    <div class="board-head">
+      <h2>📈 페니주식 ($5 이하) 실시간</h2>
+      <span class="hint">14:32:05 기준 · 정렬: 언급순</span>
+    </div>
+    <div class="scroller">
+      <table>
+        <thead><tr>
+          <th class="left">#</th><th class="left">티커 / 종목</th><th>현재가</th><th>등락</th>
+          <th>호가 (매수%)</th><th>언급 (24h)</th><th>업보트</th><th>순위변동</th><th>거래량</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="dim left">1</td><td class="left"><span class="tk">AMC</span> <span class="name">AMC 엔터테인먼트</span></td><td>$1.87</td><td><span class="pill-c up">+6.8%</span></td><td><div class="ba"><div class="bar"><div class="buy" style="width:49%"></div></div><span class="n">49</span></div></td><td><div class="mc"><div class="track"><div class="fill" style="width:100%"></div></div><span class="nm">874</span></div></td><td class="dim">42,000</td><td><span class="mv up">▲1</span></td><td class="dim">18.2M</td></tr>
+          <tr><td class="dim left">2</td><td class="left"><span class="tk">HTZ</span> <span class="name">허츠 글로벌</span></td><td>$1.83</td><td><span class="pill-c down">-8.7%</span></td><td><div class="ba thin"><div class="bar"><div class="buy" style="width:29%"></div></div><span class="n">29</span></div></td><td><div class="mc"><div class="track"><div class="fill" style="width:23%"></div></div><span class="nm">203</span></div></td><td class="dim">11,000</td><td><span class="mv up">▲45</span></td><td class="dim">9.8M</td></tr>
+          <tr><td class="dim left">3</td><td class="left"><span class="tk">IQ</span> <span class="name">아이치이이</span></td><td>$1.13</td><td><span class="pill-c down">-2.8%</span></td><td><div class="ba thin"><div class="bar"><div class="buy" style="width:50%"></div></div><span class="n">50</span></div></td><td><div class="mc"><div class="track"><div class="fill" style="width:36%"></div></div><span class="nm">312</span></div></td><td class="dim">14,000</td><td><span class="mv down">▼6</span></td><td class="dim">5.6M</td></tr>
+          <tr><td class="dim left">4</td><td class="left"><span class="tk">BATL</span> <span class="name">배탈리언 오일</span></td><td>$1.89</td><td><span class="pill-c up">+12.4%</span></td><td><div class="ba"><div class="bar"><div class="buy" style="width:68%"></div></div><span class="n">68</span></div></td><td><div class="mc"><div class="track"><div class="fill" style="width:16%"></div></div><span class="nm">142</span></div></td><td class="dim">8,900</td><td><span class="mv up">▲12</span></td><td class="dim">1.2M</td></tr>
+          <tr><td class="dim left">5</td><td class="left"><span class="tk">WTI</span> <span class="name">W&T 오프쇼어</span></td><td>$3.55</td><td><span class="pill-c down">-4.2%</span></td><td><div class="ba"><div class="bar"><div class="buy" style="width:44%"></div></div><span class="n">44</span></div></td><td><div class="mc"><div class="track"><div class="fill" style="width:11%"></div></div><span class="nm">98</span></div></td><td class="dim">5,400</td><td><span class="mv down">▼3</span></td><td class="dim">2.1M</td></tr>
+          <tr><td class="dim left">6</td><td class="left"><span class="tk">OPEN</span> <span class="name">오픈도어</span></td><td>$4.49</td><td><span class="pill-c up">+2.1%</span></td><td><div class="ba thin"><div class="bar"><div class="buy" style="width:50%"></div></div><span class="n">50</span></div></td><td><div class="mc"><div class="track"><div class="fill" style="width:6%"></div></div><span class="nm">56</span></div></td><td class="dim">2,100</td><td><span class="mv new" style="color:var(--accent)">NEW</span></td><td class="dim">3.4M</td></tr>
+          <tr><td class="dim left">7</td><td class="left"><span class="tk">EU</span> <span class="name">엔벨라</span></td><td>$1.22</td><td><span class="pill-c up">+15.3%</span></td><td><div class="ba thin"><div class="bar"><div class="buy" style="width:33%"></div></div><span class="n">33</span></div></td><td><div class="mc"><div class="track"><div class="fill" style="width:3%"></div></div><span class="nm">27</span></div></td><td class="dim">680</td><td><span class="mv up">▲22</span></td><td class="dim">180K</td></tr>
+          <tr><td class="dim left">8</td><td class="left"><span class="tk">DC</span> <span class="name">디스커버리 실버</span></td><td>$4.34</td><td><span class="pill-c up">+1.5%</span></td><td><div class="ba"><div class="bar"><div class="buy" style="width:54%"></div></div><span class="n">54</span></div></td><td><div class="mc"><div class="track"><div class="fill" style="width:4%"></div></div><span class="nm">34</span></div></td><td class="dim">1,200</td><td><span class="mv down">▼8</span></td><td class="dim">420K</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="footer-note">Mockup A · Refined Modern — 현재 톤(따뜻한 종이질감) 유지 + 카드/그림자/스켈레톤/토글 정제</p>
+</div>
+</body>
+</html>
