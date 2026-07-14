@@ -7,7 +7,7 @@ export const GET: APIRoute = async ({ url }) => {
   if (!TICKER_RE.test(ticker)) return jsonError("잘못된 티커입니다.", 400);
   try {
     const payload = await getPosts(ticker);
-    const ttl = payload.reddit_error || payload.news_error || payload.st_error ? 60 : 600;
+    const ttl = payload.reddit_error || payload.news_error ? 60 : 600;
     return jsonCached(payload, ttl, ttl);
   } catch (exc) {
     return jsonError(`게시물·뉴스 수집 실패: ${errMsg(exc)}`, 502);
