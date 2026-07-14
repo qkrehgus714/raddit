@@ -74,12 +74,12 @@ function getDaily(ticker: string): Promise<up.ChartData> {
   return dailyCache.getOrCompute(ticker, () => up.fetchDailyChart(ticker));
 }
 
-export interface SparkPayload { ticker: string; points: { t: number; c: number }[]; }
+export interface SparkPayload { ticker: string; points: { t: number; o: number; h: number; l: number; c: number; v: number | null }[]; }
 
-/** 스크리너 미니 차트용 — getDaily(10분 캐시) 재사용, 종가만 추려 가볍게. */
+/** 스크리너 미니 차트용 — getDaily(10분 캐시) 재사용. 캔들+다이버전스 마커를 위해 OHLC 내림. */
 export async function getDailySpark(ticker: string): Promise<SparkPayload> {
   const daily = await getDaily(ticker);
-  return { ticker, points: (daily.points ?? []).map((p) => ({ t: p.t, c: p.c })) };
+  return { ticker, points: (daily.points ?? []).map((p) => ({ t: p.t, o: p.o ?? p.c, h: p.h ?? p.c, l: p.l ?? p.c, c: p.c, v: p.v ?? null })) };
 }
 
 export interface DetailPayload {
