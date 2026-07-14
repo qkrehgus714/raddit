@@ -17,6 +17,7 @@
     --down: #2f6fdd; --down-soft: #e9f0fc;
     --bar: #c9971f; --chip-warn-bg: #f5efe2; --chip-warn-ink: #8a6d1f;
     --ma-slow: #7a5ccc;
+    --session-tint: color-mix(in srgb, var(--ink-3, #64748b) 8%, transparent);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -225,6 +226,8 @@
     color: var(--accent); border-color: var(--accent);
     background: var(--accent-soft); font-weight: 650;
   }
+  .div-toggle { cursor: pointer; padding: 4px 12px; border-radius: 99px; font-size: 0.8rem; }
+  .div-toggle.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); font-weight: 650; }
   #chart-wrap { position: relative; }
   #chart-wrap.dim { opacity: 0.45; }
   @media (prefers-reduced-motion: no-preference) { #chart-wrap { transition: opacity 0.25s; } }
@@ -276,6 +279,12 @@
   .bidask-cell .bidask-bar { width: 52px; }
   .bidask-num { font-variant-numeric: tabular-nums; font-size: 0.8rem; font-weight: 650; min-width: 2ch; text-align: right; }
   .bidask-cell.thin { opacity: 0.4; }
+
+  /* StockTwits 여론 바 — 매수=적/매도=청 (한국식 색) */
+  .sent-bar { height: 8px; background: color-mix(in srgb, var(--down) 22%, transparent); border-radius: 4px; overflow: hidden; margin: 6px 0 8px; }
+  .sent-bull { height: 100%; background: var(--up); }
+  .sent-note { font-size: .78rem; color: var(--ink-3); font-weight: 400; margin-left: 6px; }
+  .post-list .st-body { display: block; color: var(--ink); font-weight: 600; }
 
   /* GitHub star badge */
   .gh-badge {

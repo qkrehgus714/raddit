@@ -74,6 +74,144 @@ function macd(closes: number[]): MacdResult | null {
   return { hist: hist[hist.length - 1], cross };
 }
 
+/** Wilder-smoothed RSI(14) 시계열 — closes 와 동일 길이, 앞부분은 null. */
+export function rsiSeries(closes: number[], n = 14): (number | null)[] {
+  const out: (number | null)[] = new Array(closes.length).fill(null);
+  if (closes.length < n + 1) return out;
+  let gain = 0, loss = 0;
+  for (let i = 1; i <= n; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d >= 0) gain += d; else loss -= d;
+  }
+  gain /= n; loss /= n;
+  out[n] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+  for (let i = n + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    const g = d >= 0 ? d : 0, l = d < 0 ? -d : 0;
+    gain = (gain * (n - 1) + g) / n;
+    loss = (loss * (n - 1) + l) / n;
+    out[i] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+  }
+  return out;
+}
+
+/** MACD(12·26·9) 히스토그램 시계열 — closes 와 동일 길이, 앞부분은 null. */
+export function macdHistSeries(closes: number[]): (number | null)[] {
+  const out: (number | null)[] = new Array(closes.length).fill(null);
+  const e12 = emaSeries(closes, 12), e26 = emaSeries(closes, 26);
+  if (!e12 || !e26) return out;
+  // e12 aligned to closes[11:], e26 to closes[25:]. MACD line valid for closes-index i>=25.
+  const off = closes.length - e26.length; // == 25
+  // line over closes-indices 25..len-1
+  const line: number[] = [];
+  for (let j = 0; j < e26.length; j++) line.push(e12[j + (e12.length - e26.length)] - e26[j]);
+  const sig = emaSeries(line, 9);
+  if (!sig) return out;
+  // sig aligned to line[8:] => closes-index 33.. . hist at closes-index (33+k).
+  const lineStart = off; // 25
+  for (let k = 0; k < sig.length; k++) {
+    const ci = lineStart + 8 + k;
+    out[ci] = line[8 + k] - sig[k];
+  }
+  return out;
+}
+
+export interface Divergence {
+  t: number;            // 두 번째 피봇(신호 발생점) 시간 (초, candle time)
+  type: "bull" | "bear";
+  oscillator: "RSI" | "MACD";
+}
+
+/**
+ * 가격 피봇 대 오실레이터 피봇 다이버전스 감지.
+ * points: 캔들 시계열 (t 오름차순 정렬됨). 반환: 마커 위치(두 번째 피봇) 기준, t 오름차순.
+ */
+export function computeDivergences(points: Point[]): Divergence[] {
+  const closes = points.map(p => p.c);
+  const times = points.map(p => p.t);
+  if (closes.length < 2) return [];
+
+  const rsiOsc = rsiSeries(closes, 14);
+  const macdOsc = macdHistSeries(closes);
+  const { lows, highs } = findPivotIndices(closes, 3);
+
+  const out: Divergence[] = [];
+  // 노이즈 억제: 동일 i2 가 두 오실레이터에서 중복 감지되면 RSI 우선 1건만.
+  const claimed = new Set<number>();
+
+  // 임계치: RSI => |Δ| >= 1.5 ; MACD => 두 값 부호 동일 또는 |Δ|!=0 (방향 조건이 보장).
+  const passes = (name: "RSI" | "MACD", o1: number, o2: number) =>
+    name === "RSI" ? Math.abs(o2 - o1) >= 1.5 : true;
+
+  const detect = (osc: (number | null)[], name: "RSI" | "MACD") => {
+    // 연속하는 두 가격 '저점' (i1<i2)
+    for (let a = 0; a + 1 < lows.length; a++) {
+      const i1 = lows[a], i2 = lows[a + 1];
+      const o1 = osc[i1], o2 = osc[i2];
+      if (o1 == null || o2 == null || claimed.has(i2)) continue;
+      const priceLL = closes[i2] < closes[i1];
+      if (passes(name, o1, o2)) {
+        // 정규 강세: priceLL && osc2 > osc1
+        if (priceLL && o2 > o1) { out.push({ t: times[i2], type: "bull", oscillator: name }); claimed.add(i2); }
+        // 히든 강세: !priceLL && osc2 < osc1
+        else if (!priceLL && o2 < o1) { out.push({ t: times[i2], type: "bull", oscillator: name }); claimed.add(i2); }
+      }
+    }
+    // 연속하는 두 가격 '고점' (i1<i2)
+    for (let a = 0; a + 1 < highs.length; a++) {
+      const i1 = highs[a], i2 = highs[a + 1];
+      const o1 = osc[i1], o2 = osc[i2];
+      if (o1 == null || o2 == null || claimed.has(i2)) continue;
+      const priceHH = closes[i2] > closes[i1];
+      if (passes(name, o1, o2)) {
+        // 정규 약세: priceHH && osc2 < osc1
+        if (priceHH && o2 < o1) { out.push({ t: times[i2], type: "bear", oscillator: name }); claimed.add(i2); }
+        // 히든 약세: !priceHH && osc2 > osc1
+        else if (!priceHH && o2 > o1) { out.push({ t: times[i2], type: "bear", oscillator: name }); claimed.add(i2); }
+      }
+    }
+  };
+
+  detect(rsiOsc, "RSI");
+  detect(macdOsc, "MACD");
+
+  out.sort((a, b) => a.t - b.t);
+  return out;
+}
+
+/**
+ * 가격 시계열에서 피봇(저점·고점) 인덱스 탐지 (window k).
+ * arr[i]!=null 이고 arr[i] 가 i±k 구간의 (non-null) 최소면 저점, 최대면 고점.
+ * 동일값 평탄구간(plateau) 은 첫 인덱스만 남겨 중복 집계를 막는다.
+ */
+function findPivotIndices(arr: number[], k = 3): { lows: number[]; highs: number[] } {
+  const lows: number[] = [], highs: number[] = [];
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
+    if (v == null) continue;
+    let isLow = true, isHigh = true;
+    for (let j = Math.max(0, i - k); j <= Math.min(arr.length - 1, i + k); j++) {
+      if (j === i) continue;
+      const nv = arr[j];
+      if (nv == null) continue;
+      if (v > nv) isLow = false;   // 더 작은 이웃 → 저점 아님
+      if (v < nv) isHigh = false;  // 더 큰 이웃 → 고점 아님
+    }
+    if (isLow) {
+      // plateau 중복 제거: 직전 저점과 인접·동일값이면 건너뛴다
+      const prev = lows[lows.length - 1];
+      if (prev === i - 1 && arr[prev] === v) continue;
+      lows.push(i);
+    }
+    if (isHigh) {
+      const prev = highs[highs.length - 1];
+      if (prev === i - 1 && arr[prev] === v) continue;
+      highs.push(i);
+    }
+  }
+  return { lows, highs };
+}
+
 interface BollingerResult { pctb: number | null; width: number | null; squeeze: boolean; }
 
 /** 볼린저밴드(20일, 2σ) — %B, 밴드 폭(%), 스퀴즈(폭이 최근 하위 20%) 여부. */

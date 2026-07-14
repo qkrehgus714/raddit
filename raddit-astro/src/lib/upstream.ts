@@ -17,6 +17,8 @@ const NEWS_SEARCH_URL = (q: string) =>
   `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=0&newsCount=25`;
 const SYMBOL_SEARCH_URL = (q: string) =>
   `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
+const STOCKTWITS_URL = (ticker: string) =>
+  `https://api.stocktwits.com/api/2/streams/symbol/${encodeURIComponent(ticker)}.json?limit=30`;
 
 const REDDIT_RPC_URL = process.env.REDDIT_RPC_URL?.replace(/\/$/, "");
 const REDDIT_RPC_KEY = process.env.REDDIT_RPC_KEY;
@@ -324,6 +326,61 @@ export async function fetchNews(ticker: string): Promise<NewsItem[]> {
     ts: n.providerPublishTime,
     relatedTickers: n.relatedTickers,
   }));
+}
+
+export interface StocktwitsMessage {
+  body: string;
+  username: string;
+  ts: number | null;       // created_at → unix sec
+  sentiment: "Bullish" | "Bearish" | null;
+}
+
+export interface StocktwitsSentiment {
+  messages: StocktwitsMessage[];
+  bullish_pct: number | null; // 태그된 메시지 한정; 태그 0건이면 null
+  tagged: number;
+  total: number;
+}
+
+/**
+ * StockTwits 공개 심벌 스트림에서 최신 메시지 + Bullish/Bearish 여론 집계.
+ * 404/빈 스트림은 null (정상 종목도 메시지가 없을 수 있음).
+ * 네트워크·파싱·그 외 HTTP 오류는 throw — getPosts 의 allSettled 로 레딧/뉴스와 격리됨.
+ */
+export async function fetchStocktwitsSentiment(ticker: string): Promise<StocktwitsSentiment | null> {
+  const res = await fetch(STOCKTWITS_URL(ticker), {
+    headers: { "User-Agent": BROWSER_UA },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`StockTwits 응답 ${res.status} (api.stocktwits.com)`);
+  const data = await res.json() as { messages?: any[] };
+  const raw = data.messages;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  let bullish = 0;
+  let tagged = 0;
+  const messages: StocktwitsMessage[] = raw.map((m) => {
+    const basic = m?.entities?.sentiment?.basic;
+    const sentiment: "Bullish" | "Bearish" | null =
+      basic === "Bullish" ? "Bullish" : basic === "Bearish" ? "Bearish" : null;
+    if (sentiment) {
+      tagged++;
+      if (sentiment === "Bullish") bullish++;
+    }
+    const ms = m?.created_at ? Date.parse(m.created_at) : NaN;
+    return {
+      body: m?.body ?? "",
+      username: m?.user?.username ?? "",
+      ts: Number.isFinite(ms) ? Math.floor(ms / 1000) : null,
+      sentiment,
+    };
+  });
+  return {
+    messages: messages.slice(0, 8),
+    bullish_pct: tagged > 0 ? round4((bullish / tagged) * 100) : null,
+    tagged,
+    total: raw.length,
+  };
 }
 
 export interface SymbolItem { ticker: string; name: string | null; exchange: string | null; }
