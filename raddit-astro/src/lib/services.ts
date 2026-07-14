@@ -53,6 +53,8 @@ export async function getData(
       }
       return true;
     });
+    // 표시 대상(필터 후)에만 호가잔량 비율 부착 — 배치(v7/quote+crumb)
+    await up.attachBidAskBatch(items);
     return {
       generated_at: kstDateTime(),
       filter: filterName,

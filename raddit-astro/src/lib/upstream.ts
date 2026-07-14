@@ -67,6 +67,7 @@ export interface MentionItem {
   rank_24h_ago?: number;
   mentions_24h_ago?: number;
   quote?: Quote | null;
+  buy_ratio_pct?: number | null;
 }
 
 export async function fetchMentions(filter: string): Promise<MentionItem[]> {
@@ -170,6 +171,43 @@ export async function fetchBidAsk(ticker: string, retry = true): Promise<BidAsk 
   } catch {
     return null;
   }
+}
+/**
+ * 호가잔량(매수/매도) 비율을 v7/quote 배치로 조회해 items에 채운다 (crumb 인증).
+ * 표시 대상(필터 후) items에만 호출 — 페니모드 ~18건, 전체모드 ~200건.
+ * crumb 발급 실패/청크 실패 시 해당 건 buy_ratio_pct=null.
+ */
+export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, concurrency = 5): Promise<void> {
+  if (!items.length) return;
+  let auth: { cookie: string; crumb: string };
+  try {
+    auth = await getYahooAuth();
+  } catch {
+    return;
+  }
+  const chunks: MentionItem[][] = [];
+  for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const chunk = chunks[next++];
+      try {
+        const url = `${YAHOO_QUOTE_URL(chunk.map(c => c.ticker).join(","))}&crumb=${encodeURIComponent(auth.crumb)}`;
+        const res = await fetch(url, { headers: { "User-Agent": BROWSER_UA, Cookie: auth.cookie }, signal: AbortSignal.timeout(10000) });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const byTicker = new Map<string, any>();
+        for (const q of data?.quoteResponse?.result ?? []) byTicker.set(q.symbol, q);
+        for (const c of chunk) {
+          const q = byTicker.get(c.ticker);
+          if (q) c.buy_ratio_pct = parseBidAsk(q).buy_ratio_pct;
+        }
+      } catch {
+        // 청크 실패 시 해당 청크 호가 null
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
 

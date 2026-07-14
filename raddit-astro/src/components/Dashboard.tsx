@@ -19,6 +19,7 @@ const COLS = [
   { key: "ticker",   label: "티커 / 종목명", left: true },
   { key: "price",    label: "현재가", left: false },
   { key: "chg",      label: "등락", left: false },
+  { key: "bidask",   label: "호가 (매수%)", left: false },
   { key: "mentions", label: "언급 (24h)", left: false },
   { key: "upvotes",  label: "업보트", left: false },
   { key: "move",     label: "순위변동", left: false },
@@ -50,6 +51,7 @@ function timeAgo(ts: number | null): string {
 }
 function sortVal(r: Row, key: string): number | string {
   if (key === "move") return r.rank_24h_ago ? r.rank_24h_ago - r.rank : Infinity;
+  if (key === "bidask") return r.bidAskPct == null ? -Infinity : r.bidAskPct;
   if (key === "ticker") return r.ticker;
   const v = r[key];
   return v == null ? -Infinity : v;
@@ -138,6 +140,7 @@ export default function Dashboard() {
         price: d.quote ? d.quote.price : null,
         chg: d.quote ? d.quote.day_change_pct : null,
         vol: d.quote ? d.quote.volume : null,
+        bidAskPct: d.buy_ratio_pct ?? null,
       }));
       setRows(filtered);
       setScanned(data.scanned);
@@ -765,6 +768,12 @@ export default function Dashboard() {
                       <td class="left"><span class="tk">{d.ticker}</span><br /><span class="name">{d.name || ""}</span></td>
                       <td>{d.price != null ? "$" + d.price.toFixed(2) : "-"}</td>
                       <td innerHTML={chgHtml}></td>
+                      <td>{d.bidAskPct != null ? (
+                        <div class="bidask-cell">
+                          <div class="bidask-bar"><div class="bidask-buy" style={{ width: `${d.bidAskPct}%` }}></div></div>
+                          <span class="bidask-num">{d.bidAskPct.toFixed(0)}</span>
+                        </div>
+                      ) : "-"}</td>
                       <td>
                         <div class="mention-cell">
                           <span class="mdelta">{delta}</span>
