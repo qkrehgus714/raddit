@@ -24,7 +24,7 @@ interface BandX {
 
 class SessionBandsRenderer implements IPrimitivePaneRenderer {
   constructor(private readonly _bands: BandX[], private readonly _color: string) {}
-  draw(target: CanvasRenderingTarget2D): void {
+  draw(target: any): void {
     target.useBitmapCoordinateSpace((scope: any) => {
       const ctx = scope.context as CanvasRenderingContext2D;
       const pr = scope.horizontalPixelRatio as number;
