@@ -13,6 +13,9 @@ const detailCache = new TtlCache<DetailPayload>(300_000, 300_000);
 const dailyCache = new TtlCache<up.ChartData>(600_000, 600_000);
 const postsCache = new TtlCache<PostsPayload>(600_000, 300_000);
 const searchCache = new TtlCache<SearchPayload>(600_000, 600_000);
+// StockTwits 공개 엔드포인트가 Cloudflare JS 챌린지(403) 로 서버사이드 차단 —
+// 소스 결정(#40/#56) 전까지 dormant. STOCKTWITS_ENABLED=1 시에만 호출·노출.
+const ST_ENABLED = process.env.STOCKTWITS_ENABLED === "1";
 
 // 파이썬 서버는 PC 로컬 시간(KST)을 썼다 — 클라우드에선 UTC라 명시적으로 서울 시간 포맷
 const kstDateTime = () =>
@@ -133,6 +136,7 @@ export interface PostsPayload {
   news_error: string | null;
   stocktwits: up.StocktwitsSentiment | null;
   st_error: string | null;
+  st_enabled: boolean;
   generated_at: string;
 }
 
@@ -184,7 +188,7 @@ export async function getPosts(ticker: string): Promise<PostsPayload> {
       up.fetchRedditPosts(ticker),
       up.fetchNews(ticker),
       getDaily(ticker), // 회사명 확보용 — 상세 모달의 일봉 캐시와 공유되어 대부분 무비용
-      up.fetchStocktwitsSentiment(ticker),
+      ST_ENABLED ? up.fetchStocktwitsSentiment(ticker) : Promise.resolve(null),
     ]);
     const name = daily.status === "fulfilled"
       ? ((daily.value.meta.shortName ?? daily.value.meta.longName ?? null) as string | null)
@@ -195,13 +199,15 @@ export async function getPosts(ticker: string): Promise<PostsPayload> {
       news: news.status === "fulfilled" ? filterNews(news.value, ticker, name) : [],
       reddit_error: reddit.status === "rejected" ? reason(reddit) : null,
       news_error: news.status === "rejected" ? reason(news) : null,
-      stocktwits: st.status === "fulfilled" ? st.value : null,
-      st_error: st.status === "rejected" ? reason(st) : null,
+      stocktwits: ST_ENABLED && st.status === "fulfilled" ? st.value : null,
+      st_error: ST_ENABLED && st.status === "rejected" ? reason(st) : null,
+      st_enabled: ST_ENABLED,
       generated_at: kstTime(),
     };
   }, {
     // 일부 실패한 응답은 짧게만 캐시 — 곧 재시도할 수 있게
-    ttlFor: v => (v.reddit_error || v.news_error || v.st_error ? 60_000 : 600_000),
+    // (st_error 는 분리 — StockTwits 실패가 레딧/뉴스 캐시를 단축시키지 않게)
+    ttlFor: v => (v.reddit_error || v.news_error ? 60_000 : 600_000),
   });
 }
 

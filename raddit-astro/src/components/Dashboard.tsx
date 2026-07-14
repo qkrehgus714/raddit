@@ -97,6 +97,7 @@ export default function Dashboard() {
   const [newsEmpty, setNewsEmpty] = createSignal("");
   const [stSent, setStSent] = createSignal<{bullish_pct:number|null; messages:{body:string;username:string;ts:number|null;sentiment:string|null}[]; total:number; tagged:number} | null>(null);
   const [stEmpty, setStEmpty] = createSignal("");
+  const [stEnabled, setStEnabled] = createSignal(false);
 
   // Changelog
   const [clOpen, setClOpen] = createSignal(false);
@@ -474,7 +475,7 @@ export default function Dashboard() {
   async function loadPosts(ticker: string) {
     setRedditPosts([]); setRedditEmpty("불러오는 중…");
     setNewsPosts([]); setNewsEmpty("불러오는 중…");
-    setStSent(null); setStEmpty("");
+    setStSent(null); setStEmpty(""); setStEnabled(false);
     try {
       const res = await fetch(`/api/posts?ticker=${encodeURIComponent(ticker)}`);
       const data = await res.json();
@@ -485,6 +486,7 @@ export default function Dashboard() {
       setNewsPosts(data.news || []);
       setNewsEmpty(data.news_error ? "뉴스 불러오기 실패" : "관련 뉴스가 없습니다");
       setStSent(data.stocktwits || null);
+      setStEnabled(!!data.st_enabled);
       setStEmpty(data.st_error ? "StockTwits 불러오기 실패" : (data.stocktwits ? "" : "StockTwits 데이터 없음"));
     } catch (err: any) {
       if (dlgTicker() !== ticker) return;
@@ -845,7 +847,7 @@ export default function Dashboard() {
               <div class="bidask-label">호가 잔량 매수 {bidAskPct()!.toFixed(0)}% · 매도 {(100 - bidAskPct()!).toFixed(0)}%</div>
             </div>
           </Show>
-          <Show when={stSent()} fallback={<Show when={stEmpty()}><p class="dlg-status">{stEmpty()}</p></Show>}>
+          <Show when={stEnabled() && stSent()} fallback={<Show when={stEnabled() && stEmpty()}><p class="dlg-status">{stEmpty()}</p></Show>}>
             <h3 class="dlg-sub">StockTwits 여론 <Show when={stSent()!.tagged > 0}><span class="sent-note">{stSent()!.bullish_pct!.toFixed(0)}% 매수 · {(100 - stSent()!.bullish_pct!).toFixed(0)}% 매도 (태그 {stSent()!.tagged}건)</span></Show></h3>
             <Show when={(stSent()!.tagged ?? 0) > 0}>
               <div class="sent-bar"><div class="sent-bull" style={{ width: `${stSent()!.bullish_pct}%` }}></div></div>
