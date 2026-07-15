@@ -207,8 +207,9 @@
   .dlg-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .dlg-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .dlg-title .tk { font-size: 1.3rem; }
-  .dlg-price { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; }
+  .dlg-price { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; flex-wrap: wrap; }
   .dlg-price .now { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .dlg-price .ext { display: flex; align-items: baseline; gap: 6px; font-size: 0.85rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
   .dlg-close {
     cursor: pointer; border: 1px solid var(--line); background: none; color: var(--ink-2);
     border-radius: 8px; width: 32px; height: 32px; font-size: 0.9rem; flex: none;
@@ -332,7 +333,7 @@
       <div class="dlg-head">
         <div>
           <div class="dlg-title"><span class="tk" id="dlg-ticker"></span><span class="name" id="dlg-name"></span></div>
-          <div class="dlg-price"><span class="now" id="dlg-price"></span><span id="dlg-chg"></span></div>
+          <div class="dlg-price"><span class="now" id="dlg-price"></span><span id="dlg-chg"></span><span class="ext" id="dlg-ext"></span></div>
           <div class="dlg-bidask" id="dlg-bidask" hidden>
             <div class="bidask-bar"><div class="bidask-buy" id="bidask-buy-bar"></div></div>
             <div class="bidask-label" id="bidask-label"></div>
@@ -545,6 +546,26 @@ let chartState = null, lastDetail = null;
 function fmtPrice(v) { return "$" + (Math.abs(v) < 1 ? v.toFixed(3) : v.toFixed(2)); }
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
+// 장외(프리·애프터) 시세 병기 — 헤더의 정규장 가격·등락률과 분봉 차트(장외 봉 포함)의
+// 마지막 캔들이 어긋나 보이는 문제 보완 (#72). 정규장 중에는 ext_price가 null이라 비워진다.
+function renderExtHours(d) {
+  const el = $("dlg-ext");
+  el.innerHTML = "";
+  if (d.range !== "min" || d.ext_price == null) return;
+  const label = document.createElement("span");
+  label.textContent = d.market_state === "PRE" ? "프리마켓" : "애프터";
+  const price = document.createElement("span");
+  price.textContent = fmtPrice(d.ext_price);
+  el.append(label, price);
+  if (d.ext_change_pct != null) {
+    const chg = d.ext_change_pct;
+    const s = document.createElement("span");
+    s.className = "pill " + (chg > 0 ? "up" : chg < 0 ? "down" : "flat");
+    s.textContent = (chg > 0 ? "+" : "") + chg.toFixed(2) + "%";
+    el.appendChild(s);
+  }
+}
+
 function setChgPill(el, chg) {
   el.innerHTML = "";
   if (chg == null) return;
@@ -573,6 +594,7 @@ function openDetail(ticker, fallbackName) {
   $("dlg-name").textContent = (d && d.name) || fallbackName || "";
   $("dlg-price").textContent = d && d.price != null ? fmtPrice(d.price) : "";
   setChgPill($("dlg-chg"), d ? d.chg : null);
+  $("dlg-ext").innerHTML = "";
   renderBidAsk(null);
   if (d) {
     const mv = rankMove(d);
@@ -642,6 +664,7 @@ async function loadDetail() {
       if (data.range === "min" && data.prev_close)
         setChgPill($("dlg-chg"), (data.price - data.prev_close) / data.prev_close * 100);
     }
+    renderExtHours(data);
     renderBidAsk(data);
     drawChart(data);
     renderAnalysis(data.analysis || {});
