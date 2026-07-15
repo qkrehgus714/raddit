@@ -71,6 +71,9 @@ export interface DetailPayload {
   bid_size: number | null;
   ask_size: number | null;
   buy_ratio_pct: number | null;
+  market_state: string | null;
+  ext_price: number | null;
+  ext_change_pct: number | null;
   generated_at: string;
 }
 
@@ -104,6 +107,9 @@ export async function getDetail(ticker: string, rng: string): Promise<DetailPayl
       bid_size: bidAsk?.bid_size ?? null,
       ask_size: bidAsk?.ask_size ?? null,
       buy_ratio_pct: bidAsk?.buy_ratio_pct ?? null,
+      market_state: bidAsk?.market_state ?? null,
+      ext_price: bidAsk?.ext_price ?? null,
+      ext_change_pct: bidAsk?.ext_change_pct ?? null,
       generated_at: kstTime(),
     };
   }, { ttlMs: detailTtlSec(rng) * 1000 });

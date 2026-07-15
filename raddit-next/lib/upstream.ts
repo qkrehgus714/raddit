@@ -122,18 +122,40 @@ export interface BidAsk {
   ask_size: number | null;
   /** 호가 잔량 중 매수(bid) 비중(%). 장외 등 호가가 없으면 null. */
   buy_ratio_pct: number | null;
+  /** Yahoo marketState — PRE·REGULAR·POST·POSTPOST·CLOSED 등. */
+  market_state: string | null;
+  /** 장외(프리·애프터) 현재가. 정규장 중이거나 장외 시세가 없으면 null. */
+  ext_price: number | null;
+  /** 장외 등락률(%) — 정규장 종가 대비. */
+  ext_change_pct: number | null;
 }
 
 function parseBidAsk(q: any): BidAsk {
   const bidSize: number | null = q.bidSize ?? null;
   const askSize: number | null = q.askSize ?? null;
   const total = (bidSize ?? 0) + (askSize ?? 0);
+  // 차트 meta의 regularMarketPrice는 정규장 마감가에 고정되므로, 장외 시간에는
+  // v7 quote의 pre/postMarket 필드가 유일한 현재가 소스다 (#72).
+  // POSTPOST·CLOSED에도 postMarket 값을 유지 — 애프터 종료 후에도 마지막 장외가가 유효.
+  const state: string | null = q.marketState ?? null;
+  let extPrice: number | null = null;
+  let extPct: number | null = null;
+  if (state === "PRE" && q.preMarketPrice != null) {
+    extPrice = q.preMarketPrice;
+    extPct = q.preMarketChangePercent ?? null;
+  } else if (["POST", "POSTPOST", "CLOSED"].includes(state ?? "") && q.postMarketPrice != null) {
+    extPrice = q.postMarketPrice;
+    extPct = q.postMarketChangePercent ?? null;
+  }
   return {
     bid: q.bid ?? null,
     ask: q.ask ?? null,
     bid_size: bidSize,
     ask_size: askSize,
     buy_ratio_pct: total > 0 ? round4((bidSize! / total) * 100) : null,
+    market_state: state,
+    ext_price: extPrice == null ? null : round4(extPrice),
+    ext_change_pct: extPct == null ? null : round4(extPct),
   };
 }
 
