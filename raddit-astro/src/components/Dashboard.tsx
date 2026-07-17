@@ -1,6 +1,6 @@
 // raddit 메인 대시보드 — SolidJS 컴포넌트
 // dashboard.html 1,126줄을 컴포넌트화. 모든 기능 100% 동등.
-import { createSignal, onMount, onCleanup, createMemo, Show, For } from "solid-js";
+import { createSignal, createEffect, onMount, onCleanup, createMemo, Show, For } from "solid-js";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter, ISeriesMarkersPluginApi, SeriesMarker } from "lightweight-charts";
 import { computeDivergences } from "../lib/indicators";
@@ -87,8 +87,42 @@ export default function Dashboard() {
   // 보기 모드 (목록/스크리너) — localStorage 에 저장
   // 보기 모드 (목록/스크리너) — localStorage 저장. SSR/hydration 일치를 위해
   // 초기값은 'list' 고정, onMount 에서 localStorage 를 읽어 grid 로 전환.
-  const [viewMode, setViewMode] = createSignal<"list" | "grid">("list");
-  const switchView = (m: "list" | "grid") => { setViewMode(m); try { localStorage.setItem("raddit-view", m); } catch {} };
+  type ViewMode = "list" | "grid" | "alerts";
+  const [viewMode, setViewMode] = createSignal<ViewMode>("list");
+  const switchView = (m: ViewMode) => { setViewMode(m); try { localStorage.setItem("raddit-view", m); } catch {} };
+
+  // ⚡ 급등 감지 뷰 (#74)
+  interface AlertRow {
+    ticker: string; name: string | null; detected_at: number;
+    price: number; change_pct: number; vol_ratio: number | null;
+    market_state: string; news: "none" | "recent" | "unknown";
+    news_title: string | null; news_url: string | null;
+    last_price: number | null; since_pct: number | null;
+  }
+  const [alertRows, setAlertRows] = createSignal<AlertRow[]>([]);
+  const [alertsOpen, setAlertsOpen] = createSignal<boolean | null>(null); // market_open
+  const [alertsErr, setAlertsErr] = createSignal("");
+
+  const loadAlerts = async () => {
+    try {
+      const res = await fetch("/api/alerts");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      setAlertRows(d.alerts ?? []);
+      setAlertsOpen(d.market_open ?? null);
+      setAlertsErr("");
+    } catch {
+      setAlertsErr("급등 이력을 불러오지 못했습니다");
+    }
+  };
+
+  // 알림 뷰가 열려 있는 동안만 60초 갱신 — 상세 모달 분 탭의 60초 관례와 동일
+  createEffect(() => {
+    if (viewMode() !== "alerts") return;
+    loadAlerts();
+    const id = setInterval(loadAlerts, 60_000);
+    onCleanup(() => clearInterval(id));
+  });
 
   // 상세 모달
   const [dlgOpen, setDlgOpen] = createSignal(false);
@@ -727,7 +761,10 @@ export default function Dashboard() {
 
   // ── 생명주기 ──
   onMount(() => {
-    try { if (localStorage.getItem("raddit-view") === "grid") setViewMode("grid"); } catch {}
+    try {
+      const saved = localStorage.getItem("raddit-view");
+      if (saved === "grid" || saved === "alerts") setViewMode(saved);
+    } catch {}
     load();
     fetch("/api/version").then(r => r.json()).then(d => { if (d.version) setVersion(`v${d.version}`); }).catch(() => {});
     fetch("/api/stars").then(r => r.json()).then(d => { if (d.stars != null) setStarCount(d.stars); }).catch(() => {});
@@ -798,6 +835,7 @@ export default function Dashboard() {
         <div class="view-toggle" role="group" aria-label="보기 모드">
           <button type="button" class={viewMode() === "list" ? "active" : ""} onClick={() => switchView("list")}>목록</button>
           <button type="button" class={viewMode() === "grid" ? "active" : ""} onClick={() => switchView("grid")}>스크리너</button>
+          <button type="button" class={viewMode() === "alerts" ? "active" : ""} onClick={() => switchView("alerts")}>⚡ 급등</button>
         </div>
         <div class="search">
           <input
@@ -868,7 +906,9 @@ export default function Dashboard() {
       <div class="board">
         <div class="board-head">
           <h2>{boardTitle()}</h2>
-          <span class="hint">{viewMode() === "list" ? "열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석" : "카드 클릭 → 실시간 차트와 분석"}</span>
+          <span class="hint">{viewMode() === "list" ? "열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석"
+            : viewMode() === "grid" ? "카드 클릭 → 실시간 차트와 분석"
+            : "이상 급등 감지 이력 · 행 클릭 → 실시간 차트와 분석"}</span>
         </div>
         <Show when={viewMode() === "list"}>
         <div class="scroller">
@@ -954,6 +994,53 @@ export default function Dashboard() {
                 </div>
               );
             }}</For>
+          </div>
+        </Show>
+        <Show when={viewMode() === "alerts"}>
+          <div class="scroller">
+            <table>
+              <thead><tr>
+                <th>감지 시각</th><th class="left">종목</th><th>세션</th><th>상승률</th>
+                <th>거래량</th><th class="left">뉴스</th><th>감지가</th><th>이후 등락</th>
+              </tr></thead>
+              <tbody>
+                <Show when={alertRows().length} fallback={
+                  <tr><td class="empty" colspan="8">
+                    {alertsErr() || (alertsOpen() === false
+                      ? "미국 장 외 시간입니다 (감시: 평일 ET 4:00~20:00)"
+                      : "아직 감지된 급등이 없습니다")}
+                  </td></tr>
+                }>
+                  <For each={alertRows()}>{(a) => (
+                    <tr tabindex="0"
+                      onClick={() => openDetail(a.ticker)}
+                      onKeyDown={(e) => { if (e.key === "Enter") openDetail(a.ticker); }}
+                    >
+                      <td class="dim">{new Date(a.detected_at * 1000).toLocaleTimeString("ko-KR",
+                        { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit" })}</td>
+                      <td class="left"><span class="tk">{a.ticker}</span><br /><span class="name">{a.name || ""}</span></td>
+                      <td><span class="pill flat">{a.market_state === "PRE" ? "프리" : a.market_state === "REGULAR" ? "정규" : "애프터"}</span></td>
+                      <td><span class="pill up">+{a.change_pct.toFixed(1)}%</span></td>
+                      <td class="dim">{a.vol_ratio != null ? `×${a.vol_ratio.toFixed(1)}` : "-"}</td>
+                      <td class="left">
+                        {a.news === "none"
+                          ? <span class="news-badge lead">뉴스 없음 · 선행 가능성</span>
+                          : a.news === "recent"
+                            ? <a class="news-badge has" href={a.news_url ?? "#"} target="_blank"
+                                rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                                title={a.news_title ?? ""}>뉴스 있음</a>
+                            : <span class="news-badge">확인 실패</span>}
+                      </td>
+                      <td>${a.price.toFixed(2)}</td>
+                      <td>{a.since_pct != null
+                        ? <span class={`pill ${a.since_pct > 0 ? "up" : a.since_pct < 0 ? "down" : "flat"}`}>
+                            {(a.since_pct > 0 ? "+" : "") + a.since_pct.toFixed(1)}%</span>
+                        : "-"}</td>
+                    </tr>
+                  )}</For>
+                </Show>
+              </tbody>
+            </table>
           </div>
         </Show>
       </div>
