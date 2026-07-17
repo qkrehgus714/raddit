@@ -228,6 +228,75 @@ export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, co
   await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
+// ── 급등 탐지용 배치 시세 (#74) ──
+
+export interface SpikeQuote {
+  price: number | null;        // regularMarketPrice
+  ext_price: number | null;    // 세션에 따른 pre/postMarket 가격
+  volume: number | null;       // regularMarketVolume (당일 누적)
+  avg_vol_10d: number | null;  // averageDailyVolume10Day
+  market_state: string | null;
+  name: string | null;
+}
+
+/** v7 quote 응답 1건 → 급등 감지에 필요한 필드만. 세션에 따라 유효한 장외가 선택. */
+export function parseSpikeQuote(q: any): SpikeQuote {
+  const state: string | null = q.marketState ?? null;
+  let ext: number | null = null;
+  if (state === "PRE" && q.preMarketPrice != null) ext = q.preMarketPrice;
+  else if (["POST", "POSTPOST", "CLOSED"].includes(state ?? "") && q.postMarketPrice != null) {
+    ext = q.postMarketPrice;
+  }
+  return {
+    price: q.regularMarketPrice ?? null,
+    ext_price: ext == null ? null : round4(ext),
+    volume: q.regularMarketVolume ?? null,
+    avg_vol_10d: q.averageDailyVolume10Day ?? null,
+    market_state: state,
+    name: q.shortName ?? q.longName ?? null,
+  };
+}
+
+/**
+ * 급등 감시 대상 시세를 v7/quote 배치로 조회 (crumb 인증 — attachBidAskBatch와 동일 패턴).
+ * 청크 실패는 해당 청크만 누락. crumb 발급 실패 시 빈 Map (폴러가 다음 주기에 재시도).
+ */
+export async function fetchSpikeQuotes(
+  tickers: string[], chunkSize = 60,
+): Promise<Map<string, SpikeQuote>> {
+  const out = new Map<string, SpikeQuote>();
+  if (!tickers.length) return out;
+  let auth: { cookie: string; crumb: string };
+  try {
+    auth = await getYahooAuth();
+  } catch {
+    return out;
+  }
+  const fetchChunk = (chunk: string[], a: { cookie: string; crumb: string }) =>
+    fetch(`${YAHOO_QUOTE_URL(chunk.join(","))}&crumb=${encodeURIComponent(a.crumb)}`, {
+      headers: { "User-Agent": BROWSER_UA, Cookie: a.cookie },
+      signal: AbortSignal.timeout(10000),
+    });
+  const chunks: string[][] = [];
+  for (let i = 0; i < tickers.length; i += chunkSize) chunks.push(tickers.slice(i, i + chunkSize));
+  for (const chunk of chunks) {
+    try {
+      let res = await fetchChunk(chunk, auth);
+      if (res.status === 401 || res.status === 403) {
+        yahooAuth = null;
+        try { auth = await getYahooAuth(); res = await fetchChunk(chunk, auth); } catch { continue; }
+      }
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const q of data?.quoteResponse?.result ?? []) {
+        if (q?.symbol) out.set(q.symbol, parseSpikeQuote(q));
+      }
+    } catch {
+      // 청크 실패 — 해당 청크 티커는 이번 주기 스냅샷 없음
+    }
+  }
+  return out;
+}
 
 export interface ChartData { meta: Record<string, any>; points: Point[]; }
 
