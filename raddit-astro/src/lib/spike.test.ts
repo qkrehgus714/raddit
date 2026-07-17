@@ -82,3 +82,45 @@ describe("isMarketWindow", () => {
     expect(isMarketWindow(new Date("2026-07-18T14:00:00Z"))).toBe(false);
   });
 });
+
+import { recordAlert, getAlerts, markAlerted, underCooldown, _resetSpikeState } from "./spike";
+import type { SpikeAlert } from "./spike";
+
+const mkAlert = (ticker: string, detectedAtMs: number): SpikeAlert => ({
+  ticker, name: null, detected_at: Math.floor(detectedAtMs / 1000),
+  price: 1, change_pct: 5, vol_ratio: 6, market_state: "REGULAR",
+  news: "none", news_title: null, news_url: null, last_price: 1, since_pct: 0,
+});
+
+describe("알림 이력 관리", () => {
+  it("최신순으로 쌓이고 48시간 지난 건 제거", () => {
+    _resetSpikeState();
+    const now = Date.now();
+    recordAlert(mkAlert("OLD", now - 49 * 3600_000), now);
+    recordAlert(mkAlert("A", now - 3600_000), now);
+    recordAlert(mkAlert("B", now), now);
+    const { alerts } = getAlerts();
+    expect(alerts.map(a => a.ticker)).toEqual(["B", "A"]);
+  });
+
+  it("최대 건수 초과 시 오래된 것부터 버림", () => {
+    _resetSpikeState();
+    const now = Date.now();
+    // 실제 폴러처럼 시간순(오래된 것 먼저)으로 기록 — T204가 가장 오래됨
+    for (let i = 204; i >= 0; i--) recordAlert(mkAlert(`T${i}`, now - i * 1000), now);
+    expect(getAlerts().alerts.length).toBe(200);
+    expect(getAlerts().alerts[0].ticker).toBe("T0"); // 가장 최근이 맨 앞
+  });
+});
+
+describe("쿨다운", () => {
+  it("markAlerted 후 60분 내 재감지 금지, 지나면 허용", () => {
+    _resetSpikeState();
+    const now = Date.now();
+    expect(underCooldown("ABC", now)).toBe(false);
+    markAlerted("ABC", now);
+    expect(underCooldown("ABC", now + SPIKE.COOLDOWN_MS - 1)).toBe(true);
+    expect(underCooldown("ABC", now + SPIKE.COOLDOWN_MS)).toBe(false);
+    expect(underCooldown("XYZ", now)).toBe(false); // 다른 티커는 무관
+  });
+});

@@ -3,6 +3,8 @@
  * 판정(judgeSpike)·장시간 판단(isMarketWindow)은 순수 함수로 유지해 테스트한다.
  */
 
+import * as up from "./upstream";
+
 // 감지 튜닝 상수 — 임계값 조정은 여기서만
 export const SPIKE = {
   POLL_MS: 90_000,           // 폴링 간격
@@ -80,4 +82,147 @@ export function isMarketWindow(now: Date = new Date()): boolean {
   const get = (t: string) => parts.find(p => p.type === t)?.value ?? "";
   const hour = Number(get("hour"));
   return !["Sat", "Sun"].includes(get("weekday")) && hour >= 4 && hour < 20;
+}
+
+// ── 알림 이력·폴링 상태 (인메모리 — 재배포 시 소실 허용, 스펙 참조) ──
+
+export interface SpikeAlert {
+  ticker: string;
+  name: string | null;
+  detected_at: number;            // epoch sec
+  price: number;                  // 감지 시점 가격
+  change_pct: number;
+  vol_ratio: number | null;
+  market_state: string;
+  news: "none" | "recent" | "unknown";
+  news_title: string | null;
+  news_url: string | null;
+  last_price: number | null;      // 폴러가 매 주기 갱신
+  since_pct: number | null;       // 감지가 대비 현재 등락
+}
+
+export interface AlertsPayload {
+  generated_at: string;
+  market_open: boolean;
+  alerts: SpikeAlert[];
+}
+
+const snapsByTicker = new Map<string, SpikeSnapshot[]>();
+const lastAlertAt = new Map<string, number>();   // 쿨다운용 (epoch ms)
+let alerts: SpikeAlert[] = [];
+
+/** 테스트 전용 — 모듈 상태 초기화. */
+export function _resetSpikeState(): void {
+  snapsByTicker.clear();
+  lastAlertAt.clear();
+  alerts = [];
+}
+
+/** 알림을 최신순 이력에 추가하고 보존 기준(48h·200건)으로 트리밍. */
+export function recordAlert(a: SpikeAlert, nowMs: number = Date.now()): void {
+  alerts.unshift(a);
+  const cutoffSec = (nowMs - SPIKE.ALERT_KEEP_MS) / 1000;
+  alerts = alerts.filter(x => x.detected_at >= cutoffSec).slice(0, SPIKE.ALERT_MAX);
+}
+
+export function getAlerts(): AlertsPayload {
+  return {
+    generated_at: new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Seoul", hour12: false }),
+    market_open: isMarketWindow(),
+    alerts,
+  };
+}
+
+/** 쿨다운 시작 — 이 시각부터 COOLDOWN_MS 동안 같은 티커 재감지 금지. */
+export function markAlerted(ticker: string, nowMs: number): void {
+  lastAlertAt.set(ticker, nowMs);
+}
+
+/** 쿨다운 중인지 — 순수 조회 (폴러와 테스트가 공유). */
+export function underCooldown(ticker: string, nowMs: number): boolean {
+  const at = lastAlertAt.get(ticker);
+  return at != null && nowMs - at < SPIKE.COOLDOWN_MS;
+}
+
+/** 감지 시점 뉴스 유무 — 실패는 unknown ("없음"으로 단정하지 않는다, 스펙 참조). */
+async function checkNews(ticker: string): Promise<Pick<SpikeAlert, "news" | "news_title" | "news_url">> {
+  try {
+    const items = await up.fetchNews(ticker);
+    const cutoff = Date.now() / 1000 - SPIKE.NEWS_FRESH_SEC;
+    const fresh = items
+      .filter(n => n.ts != null && n.ts >= cutoff)
+      .sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0));
+    return fresh.length
+      ? { news: "recent", news_title: fresh[0].title ?? null, news_url: fresh[0].url ?? null }
+      : { news: "none", news_title: null, news_url: null };
+  } catch {
+    return { news: "unknown", news_title: null, news_url: null };
+  }
+}
+
+/** 1회 폴링: 감시 대상 스냅샷 축적 → 판정 → 알림 기록 → 기존 알림 시세 갱신. */
+async function pollOnce(): Promise<void> {
+  const mentions = await up.fetchMentions("all-stocks");
+  const tickers = mentions.slice(0, SPIKE.WATCH_MAX).map(m => m.ticker);
+  const quotes = await up.fetchSpikeQuotes(tickers);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+
+  for (const [ticker, q] of quotes) {
+    const price = q.ext_price ?? q.price;
+    if (price == null || price <= 0) continue;
+
+    const snaps = snapsByTicker.get(ticker) ?? [];
+    snaps.push({ t: nowSec, price, cumVol: q.volume, state: q.market_state ?? "REGULAR" });
+    while (snaps.length && snaps[0].t < nowSec - SPIKE.SNAP_KEEP_MIN * 60) snaps.shift();
+    snapsByTicker.set(ticker, snaps);
+
+    // 기존 알림의 "감지 후 등락" 갱신 — 같은 배치 응답이라 무비용
+    for (const a of alerts) {
+      if (a.ticker === ticker) {
+        a.last_price = price;
+        a.since_pct = (price / a.price - 1) * 100;
+      }
+    }
+
+    if (underCooldown(ticker, nowMs)) continue;
+    const verdict = judgeSpike(snaps, q.avg_vol_10d, nowSec);
+    if (!verdict) continue;
+
+    markAlerted(ticker, nowMs);
+    const news = await checkNews(ticker);
+    recordAlert({
+      ticker, name: q.name, detected_at: nowSec, ...verdict, ...news,
+      last_price: price, since_pct: 0,
+    }, nowMs);
+    console.log(`[spike] ${ticker} +${verdict.change_pct.toFixed(1)}% ` +
+      `(${verdict.market_state}, vol×${verdict.vol_ratio?.toFixed(1) ?? "-"}, 뉴스 ${news.news})`);
+  }
+}
+
+// ── 폴링 루프 기동 ──
+
+let failStreak = 0;
+
+/** 폴러 기동 — 멱등. 미들웨어가 요청마다 부르지만 globalThis 가드로 1회만. */
+export function ensureSpikeWatch(): void {
+  const g = globalThis as { __radditSpikeWatch?: boolean };
+  if (g.__radditSpikeWatch) return;
+  if (process.env.SPIKE_WATCH === "0") return;
+  g.__radditSpikeWatch = true;
+  console.log("[spike] 급등 감시 시작 (90초 간격, ET 4:00~20:00 평일)");
+
+  const tick = async () => {
+    let delay: number = SPIKE.POLL_MS;
+    try {
+      if (isMarketWindow()) await pollOnce();
+      failStreak = 0;
+    } catch (e) {
+      failStreak++;
+      console.error(`[spike] 폴링 실패 (${failStreak}연속):`, e instanceof Error ? e.message : e);
+      if (failStreak >= 3) delay = 600_000; // 10분 백오프
+    }
+    setTimeout(tick, delay).unref?.();
+  };
+  setTimeout(tick, 5_000).unref?.(); // 기동 직후 요청 처리에 방해되지 않게 5초 뒤 시작
 }
