@@ -250,3 +250,67 @@ export async function getSearch(query: string): Promise<SearchPayload> {
     items: await up.searchSymbols(query),
   }));
 }
+
+// ── 공매도 현황 (#76) ──
+
+const shortCache = new TtlCache<ShortPayload>(12 * 3600_000, 3600_000);
+
+// FINRA 전 종목 맵 — getShortData 와 /api/alerts 라우트가 공유하는 모듈 레벨 캐시.
+// 하루 1회 갱신이면 충분(전일 파일). 실패는 null 캐시 후 60초 뒤 재시도.
+let finraCache: { at: number; data: up.FinraShortVolume | null } | null = null;
+let finraInflight: Promise<up.FinraShortVolume | null> | null = null;
+const FINRA_TTL_OK_MS = 24 * 3600_000;
+const FINRA_TTL_STALE_MS = 3600_000;
+const FINRA_TTL_ERR_MS = 60_000;
+
+/** 캐시 유효기간 — 최신 후보 파일이면 24h, 옛 파일이면(당일분 게시 전 로드) 1h 뒤 재확인. */
+function finraTtlMs(): number {
+  if (!finraCache?.data) return FINRA_TTL_ERR_MS;
+  return finraCache.data.date === up.finraDateCandidates()[0] ? FINRA_TTL_OK_MS : FINRA_TTL_STALE_MS;
+}
+
+export async function getFinraShortMap(): Promise<up.FinraShortVolume | null> {
+  if (finraCache && Date.now() - finraCache.at < finraTtlMs()) return finraCache.data;
+  if (!finraInflight) {
+    finraInflight = up.fetchFinraShortVolume()
+      .catch(() => null) // 장애도 null — 호출부는 결손 처리, 60초 뒤 재시도
+      .then(data => { finraCache = { at: Date.now(), data }; return data; })
+      .finally(() => { finraInflight = null; });
+  }
+  return finraInflight;
+}
+
+/** 캐시된 FINRA 맵 동기 조회 — 로드를 트리거하지 않는다 (/api/alerts 무비용 lookup용). */
+export function peekFinraShortMap(): up.FinraShortVolume | null {
+  return finraCache?.data ?? null;
+}
+
+export interface ShortPayload {
+  ticker: string;
+  interest: up.ShortInterest | null;                      // v1 — Yahoo, 격주
+  daily: { date: string; short_vol_pct: number } | null;  // v2 — FINRA, 전일
+  error: string | null;                                   // 두 소스 모두 실패 시에만
+  generated_at: string;
+}
+
+/** 공매도 잔고 + 일별 비중 — 한쪽 실패해도 나머지는 표시 (getFundamentals 식 격리). */
+export async function getShortData(ticker: string): Promise<ShortPayload> {
+  return shortCache.getOrCompute(ticker, async () => {
+    const [si, finra] = await Promise.allSettled([up.fetchShortInterest(ticker), getFinraShortMap()]);
+    const interest = si.status === "fulfilled" ? si.value : null;
+    const finraData = finra.status === "fulfilled" ? finra.value : null;
+    const row = finraData?.map.get(ticker.toUpperCase());
+    const daily = finraData && row ? { date: finraData.date, short_vol_pct: row.short_vol_pct } : null;
+    const bothFailed = si.status === "rejected" && finraData == null;
+    return {
+      ticker,
+      interest,
+      daily,
+      error: bothFailed ? (si.status === "rejected" ? reason(si) : "공매도 데이터 없음") : null,
+      generated_at: kstTime(),
+    };
+  }, {
+    // 격주 데이터라 성공은 길게(12h), 실패는 짧게 캐시해 곧 재시도
+    ttlFor: v => (v.error ? 60_000 : 12 * 3600_000),
+  });
+}

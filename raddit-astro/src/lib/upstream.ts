@@ -298,6 +298,117 @@ export async function fetchSpikeQuotes(
   return out;
 }
 
+// ── 공매도 잔고 (#76) — Yahoo v10 quoteSummary, FINRA 격주 보고 기반(~2주 지연) ──
+
+const YAHOO_QUOTESUMMARY_URL = (ticker: string) =>
+  `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics`;
+
+export interface ShortInterest {
+  shares_short: number | null;        // sharesShort.raw
+  shares_short_prior: number | null;  // sharesShortPriorMonth.raw (전월)
+  short_ratio: number | null;         // shortRatio.raw (days to cover)
+  short_pct_float: number | null;     // shortPercentOfFloat.raw × 100 (%)
+  date_short_interest: number | null; // dateShortInterest.raw (epoch sec, 보고 기준일)
+}
+
+/** v10 quoteSummary 응답 → 공매도 필드만. 모든 필드 결손 허용(null). */
+export function parseShortInterest(raw: any): ShortInterest {
+  const ks = raw?.quoteSummary?.result?.[0]?.defaultKeyStatistics ?? {};
+  const pct = ks.shortPercentOfFloat?.raw;
+  return {
+    shares_short: ks.sharesShort?.raw ?? null,
+    shares_short_prior: ks.sharesShortPriorMonth?.raw ?? null,
+    short_ratio: ks.shortRatio?.raw ?? null,
+    short_pct_float: pct != null ? round4(pct * 100) : null,
+    date_short_interest: ks.dateShortInterest?.raw ?? null,
+  };
+}
+
+/**
+ * 공매도 잔고 조회 (crumb 인증 — fetchBidAsk 패턴). 401/403 시 재발급 후 1회 재시도.
+ * fetchBidAsk와 달리 실패 시 throw — getShortData 의 allSettled 가 error 로 격리한다.
+ */
+export async function fetchShortInterest(ticker: string, retry = true): Promise<ShortInterest> {
+  const { cookie, crumb } = await getYahooAuth();
+  const url = `${YAHOO_QUOTESUMMARY_URL(ticker)}&crumb=${encodeURIComponent(crumb)}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": BROWSER_UA, Cookie: cookie },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    if (retry && (res.status === 401 || res.status === 403)) {
+      yahooAuth = null;
+      return fetchShortInterest(ticker, false);
+    }
+    throw new Error(`Yahoo quoteSummary 응답 ${res.status}`);
+  }
+  return parseShortInterest(await res.json());
+}
+
+// ── FINRA Reg SHO 일별 공매도 거래 비중 (#76 v2) — 무인증, 전 종목 단일 파일 ──
+
+const FINRA_SHVOL_URL = (yyyymmdd: string) =>
+  `https://cdn.finra.org/equity/regsho/daily/CNMSshvol${yyyymmdd}.txt`;
+
+/**
+ * 시도할 파일 날짜 후보 — ET 기준 당일부터 주말을 건너뛰며 최대 max개 (YYYYMMDD).
+ * 당일 파일은 장 마감 후 저녁(~18시 ET) 게시 — 아직 없으면 404로 자연히 전일로 소급.
+ */
+export function finraDateCandidates(now: Date = new Date(), max = 5): string[] {
+  const etToday = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(now);
+  const d = new Date(`${etToday}T00:00:00Z`);
+  const out: string[] = [];
+  while (out.length < max) {
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) out.push(d.toISOString().slice(0, 10).replace(/-/g, ""));
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  return out;
+}
+
+/**
+ * 파이프 구분 파일 파싱: Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market.
+ * 헤더·형식 불일치·TotalVolume 0 행은 제외. short_vol_pct = Short/Total × 100.
+ */
+export function parseFinraShortVolume(
+  text: string,
+): Map<string, { short_vol_pct: number; total_volume: number }> {
+  const map = new Map<string, { short_vol_pct: number; total_volume: number }>();
+  for (const line of text.split(/\r?\n/)) {
+    const parts = line.split("|");
+    if (parts.length < 5) continue;
+    const symbol = parts[1];
+    const sv = Number(parts[2]);
+    const tv = Number(parts[4]);
+    if (!symbol || symbol === "Symbol" || !Number.isFinite(sv) || !Number.isFinite(tv) || tv <= 0) continue;
+    map.set(symbol, { short_vol_pct: round4((sv / tv) * 100), total_volume: tv });
+  }
+  return map;
+}
+
+export interface FinraShortVolume {
+  date: string; // YYYYMMDD — 실제로 로드된 파일 날짜
+  map: Map<string, { short_vol_pct: number; total_volume: number }>;
+}
+
+/**
+ * 가장 최근 영업일 파일을 내려받아 파싱. 404(주말·휴일)는 다음 후보로 넘어가고
+ * 5영업일 내 파일이 없으면 null. 그 외 HTTP 오류·네트워크 오류는 throw.
+ */
+export async function fetchFinraShortVolume(now: Date = new Date()): Promise<FinraShortVolume | null> {
+  for (const date of finraDateCandidates(now)) {
+    const res = await fetch(FINRA_SHVOL_URL(date), {
+      headers: { "User-Agent": BROWSER_UA },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.status === 404) continue;
+    if (!res.ok) throw new Error(`FINRA Reg SHO 응답 ${res.status}`);
+    const map = parseFinraShortVolume(await res.text());
+    if (map.size) return { date, map };
+  }
+  return null;
+}
+
 export interface ChartData { meta: Record<string, any>; points: Point[]; }
 
 function round4(v: number): number { return Math.round(v * 1e4) / 1e4; }
