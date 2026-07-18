@@ -156,7 +156,7 @@ export default function Dashboard() {
   interface ShortData {
     interest: { shares_short: number | null; shares_short_prior: number | null;
       short_ratio: number | null; short_pct_float: number | null;
-      date_short_interest: number | null } | null;
+      short_pct_out: number | null; date_short_interest: number | null } | null;
     daily: { date: string; short_vol_pct: number } | null;
     error: string | null;
   }
@@ -1206,6 +1206,11 @@ export default function Dashboard() {
                   <div class="label">공매도 잔고 / 유통주식{siAsOf() ? ` (기준 ${siAsOf()})` : ""}</div>
                   <div class="value">{shortD()!.interest?.short_pct_float != null
                     ? `${shortD()!.interest!.short_pct_float!.toFixed(1)}%${siTrend()}` : "-"}</div>
+                </div>
+                <div class="ind">
+                  <div class="label">발행주식 대비</div>
+                  <div class="value">{shortD()!.interest?.short_pct_out != null
+                    ? `${shortD()!.interest!.short_pct_out!.toFixed(1)}%` : "-"}</div>
                 </div>
                 <div class="ind">
                   <div class="label">숏 커버 소요일</div>
