@@ -17,6 +17,7 @@
     --down: #2f6fdd; --down-soft: #e9f0fc;
     --bar: #c9971f; --chip-warn-bg: #f5efe2; --chip-warn-ink: #8a6d1f;
     --ma-slow: #7a5ccc;
+    --session-tint: color-mix(in srgb, var(--ink-3, #64748b) 8%, transparent);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -31,6 +32,7 @@
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font-family: "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
@@ -113,7 +115,7 @@
   .board-head .hint { font-size: 0.76rem; color: var(--ink-3); }
 
   .scroller { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 0.87rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 0.87rem; }
   thead th {
     text-align: right; font-weight: 600; font-size: 0.72rem; letter-spacing: 0.05em;
     text-transform: uppercase; color: var(--ink-3);
@@ -224,10 +226,13 @@
     color: var(--accent); border-color: var(--accent);
     background: var(--accent-soft); font-weight: 650;
   }
+  .div-toggle { cursor: pointer; padding: 4px 12px; border-radius: 99px; font-size: 0.8rem; }
+  .div-toggle.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); font-weight: 650; }
   #chart-wrap { position: relative; }
   #chart-wrap.dim { opacity: 0.45; }
   @media (prefers-reduced-motion: no-preference) { #chart-wrap { transition: opacity 0.25s; } }
-  .hairline { position: absolute; width: 1px; background: var(--ink-3); pointer-events: none; }
+  .chart-canvas { width: 100%; height: 280px; }
+  .chart-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 0.85rem; pointer-events: none; }
   .tip {
     position: absolute; pointer-events: none; z-index: 2;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
@@ -241,6 +246,7 @@
     font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--ink-3); margin: 18px 0 6px;
   }
+  .dlg-note { font-size: .78rem; color: var(--ink-3); font-weight: 400; margin-left: 6px; }
   .dlg-summary { margin: 0 0 10px; font-size: 0.92rem; font-weight: 600; }
   .ind-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
   .ind { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
@@ -269,6 +275,16 @@
   .bidask-bar { height: 6px; border-radius: 3px; overflow: hidden; background: var(--down); display: flex; }
   .bidask-buy { height: 100%; background: var(--up); }
   .bidask-label { font-size: 0.78rem; color: var(--ink-3); margin-top: 4px; }
+  .bidask-cell { display: flex; align-items: center; gap: 7px; justify-content: flex-end; }
+  .bidask-cell .bidask-bar { width: 52px; }
+  .bidask-num { font-variant-numeric: tabular-nums; font-size: 0.8rem; font-weight: 650; min-width: 2ch; text-align: right; }
+  .bidask-cell.thin { opacity: 0.4; }
+
+  /* StockTwits 여론 바 — 매수=적/매도=청 (한국식 색) */
+  .sent-bar { height: 8px; background: color-mix(in srgb, var(--down) 22%, transparent); border-radius: 4px; overflow: hidden; margin: 6px 0 8px; }
+  .sent-bull { height: 100%; background: var(--up); }
+  .sent-note { font-size: .78rem; color: var(--ink-3); font-weight: 400; margin-left: 6px; }
+  .post-list .st-body { display: block; color: var(--ink); font-weight: 600; }
 
   /* GitHub star badge */
   .gh-badge {
@@ -282,6 +298,23 @@
   .gh-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .gh-icon { display: inline-block; flex: none; }
   .gh-stars { font-variant-numeric: tabular-nums; }
+  .view-toggle { display: inline-flex; gap: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .view-toggle button { background: var(--card); color: var(--ink-2); border: 0; padding: 6px 12px; font-size: .85rem; cursor: pointer; }
+  .view-toggle button.active { background: var(--accent); color: #fff; }
+  .news-badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: .78rem; color: var(--ink-2); border: 1px solid var(--line); }
+  .news-badge.lead { color: var(--up); background: var(--up-soft); border-color: transparent; font-weight: 600; }
+  .news-badge.has { color: var(--accent); background: var(--accent-soft); border-color: transparent; text-decoration: none; }
+  .screener-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; padding: 12px 0; }
+  .srt-card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; cursor: pointer; transition: border-color .15s; }
+  .srt-card:hover { border-color: var(--accent); }
+  .srt-head { display: flex; align-items: baseline; gap: 8px; line-height: 1.25; }
+  .srt-tk { font-weight: 700; color: var(--ink); }
+  .srt-name { font-size: .78rem; color: var(--ink-3); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .srt-chg { font-variant-numeric: tabular-nums; font-size: .85rem; }
+  .srt-chg.up { color: var(--up); } .srt-chg.down { color: var(--down); }
+  .mini-chart { height: 72px; margin: 0 -4px; }
+  .srt-foot { display: flex; justify-content: space-between; font-size: .72rem; color: var(--ink-3); font-variant-numeric: tabular-nums; line-height: 1.25; }
 </style>
 </head>
 <body>

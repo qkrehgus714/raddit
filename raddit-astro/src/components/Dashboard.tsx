@@ -1,6 +1,10 @@
 // raddit 메인 대시보드 — SolidJS 컴포넌트
 // dashboard.html 1,126줄을 컴포넌트화. 모든 기능 100% 동등.
-import { createSignal, onMount, onCleanup, createMemo, Show, For } from "solid-js";
+import { createSignal, createEffect, onMount, onCleanup, createMemo, Show, For } from "solid-js";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle, createSeriesMarkers } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, MouseEventParams, TickMarkFormatter, ISeriesMarkersPluginApi, SeriesMarker } from "lightweight-charts";
+import { computeDivergences } from "../lib/indicators";
+import { SessionBandsPrimitive, computeIntradaySessions } from "../lib/sessionBands";
 
 // ── 상수 ──
 const FALSE_POSITIVE = new Set(["EU","IQ","RR","LINK","DC","API","LOT","ALL","PR","MA","D","ES","GL","IP","CAT","MU","ON","SO","IT","GO","AN","BE"]);
@@ -17,6 +21,7 @@ const COLS = [
   { key: "ticker",   label: "티커 / 종목명", left: true },
   { key: "price",    label: "현재가", left: false },
   { key: "chg",      label: "등락", left: false },
+  { key: "bidask",   label: "호가 (매수%)", left: false },
   { key: "mentions", label: "언급 (24h)", left: false },
   { key: "upvotes",  label: "업보트", left: false },
   { key: "move",     label: "순위변동", left: false },
@@ -32,6 +37,16 @@ function fmtVol(v: number | null): string {
   return String(v);
 }
 function fmtPrice(v: number): string { return "$" + (Math.abs(v) < 1 ? v.toFixed(3) : v.toFixed(2)); }
+function fmtM(v: number | null | undefined): string {
+  if (v == null) return "-";
+  const sign = v < 0 ? "-" : "";
+  const a = Math.abs(v);
+  if (a >= 1e12) return sign + "$" + (a / 1e12).toFixed(2) + "T";
+  if (a >= 1e9) return sign + "$" + (a / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return sign + "$" + (a / 1e6).toFixed(1) + "M";
+  if (a >= 1e3) return sign + "$" + (a / 1e3).toFixed(1) + "K";
+  return sign + "$" + a.toFixed(0);
+}
 function rankMove(d: Row): { cls: string; txt: string } {
   if (!d.rank_24h_ago) return { cls: "new", txt: "NEW" };
   const diff = d.rank_24h_ago - d.rank;
@@ -48,6 +63,7 @@ function timeAgo(ts: number | null): string {
 }
 function sortVal(r: Row, key: string): number | string {
   if (key === "move") return r.rank_24h_ago ? r.rank_24h_ago - r.rank : Infinity;
+  if (key === "bidask") return r.bidAskPct == null ? -Infinity : r.bidAskPct;
   if (key === "ticker") return r.ticker;
   const v = r[key];
   return v == null ? -Infinity : v;
@@ -68,6 +84,45 @@ export default function Dashboard() {
   const [boardTitle, setBoardTitle] = createSignal("언급 상위 종목");
   const [version, setVersion] = createSignal("v0.1.0");
   const [starCount, setStarCount] = createSignal<number | null>(null);
+  // 보기 모드 (목록/스크리너) — localStorage 에 저장
+  // 보기 모드 (목록/스크리너) — localStorage 저장. SSR/hydration 일치를 위해
+  // 초기값은 'list' 고정, onMount 에서 localStorage 를 읽어 grid 로 전환.
+  type ViewMode = "list" | "grid" | "alerts";
+  const [viewMode, setViewMode] = createSignal<ViewMode>("list");
+  const switchView = (m: ViewMode) => { setViewMode(m); try { localStorage.setItem("raddit-view", m); } catch {} };
+
+  // ⚡ 급등 감지 뷰 (#74)
+  interface AlertRow {
+    ticker: string; name: string | null; detected_at: number;
+    price: number; change_pct: number; vol_ratio: number | null;
+    market_state: string; news: "none" | "recent" | "unknown";
+    news_title: string | null; news_url: string | null;
+    last_price: number | null; since_pct: number | null;
+  }
+  const [alertRows, setAlertRows] = createSignal<AlertRow[]>([]);
+  const [alertsOpen, setAlertsOpen] = createSignal<boolean | null>(null); // market_open
+  const [alertsErr, setAlertsErr] = createSignal("");
+
+  const loadAlerts = async () => {
+    try {
+      const res = await fetch("/api/alerts");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      setAlertRows(d.alerts ?? []);
+      setAlertsOpen(d.market_open ?? null);
+      setAlertsErr("");
+    } catch {
+      setAlertsErr("급등 이력을 불러오지 못했습니다");
+    }
+  };
+
+  // 알림 뷰가 열려 있는 동안만 60초 갱신 — 상세 모달 분 탭의 60초 관례와 동일
+  createEffect(() => {
+    if (viewMode() !== "alerts") return;
+    loadAlerts();
+    const id = setInterval(loadAlerts, 60_000);
+    onCleanup(() => clearInterval(id));
+  });
 
   // 상세 모달
   const [dlgOpen, setDlgOpen] = createSignal(false);
@@ -83,6 +138,8 @@ export default function Dashboard() {
   const [dlgSignals, setDlgSignals] = createSignal<{tone:string;label:string;text:string}[]>([]);
   const [chartMeta, setChartMeta] = createSignal("");
   const [chartDim, setChartDim] = createSignal(false);
+  const [chartMsg, setChartMsg] = createSignal("");
+  const [showDiv, setShowDiv] = createSignal(true);
   const [bidAskPct, setBidAskPct] = createSignal<number | null>(null);
 
   // 게시물
@@ -90,6 +147,13 @@ export default function Dashboard() {
   const [redditEmpty, setRedditEmpty] = createSignal("");
   const [newsPosts, setNewsPosts] = createSignal<{title:string;publisher?:string;url?:string;ts?:number}[]>([]);
   const [newsEmpty, setNewsEmpty] = createSignal("");
+  // SEC 펀더멘털(공시·재무)
+  const [fund, setFund] = createSignal<{cik:string|null; filings:{form:string;date:string;docDesc:string|null;url:string}[]; financials:any|null} | null>(null);
+  const [fundLoading, setFundLoading] = createSignal(false);
+  const [fundError, setFundError] = createSignal("");
+  const [stSent, setStSent] = createSignal<{bullish_pct:number|null; messages:{body:string;username:string;ts:number|null;sentiment:string|null}[]; total:number; tagged:number} | null>(null);
+  const [stEmpty, setStEmpty] = createSignal("");
+  const [stEnabled, setStEnabled] = createSignal(false);
 
   // Changelog
   const [clOpen, setClOpen] = createSignal(false);
@@ -102,16 +166,73 @@ export default function Dashboard() {
   const [searchEmpty, setSearchEmpty] = createSignal("");
 
   // refs
-  let canvasRef: HTMLCanvasElement | undefined;
   let chartWrapRef: HTMLDivElement | undefined;
-  let chartState: any = null;
-  let lastDetail: any = null;
+  let chartContainerRef: HTMLDivElement | undefined;
+  let chart: IChartApi | null = null;
+  let candleSeries: ISeriesApi<"Candlestick"> | null = null;
+  let sessionBands: SessionBandsPrimitive | null = null;
+  let divMarkers: ISeriesMarkersPluginApi<any> | null = null;
+  let volSeries: ISeriesApi<"Histogram"> | null = null;
+  let ma20Series: ISeriesApi<"Line"> | null = null;
+  let ma50Series: ISeriesApi<"Line"> | null = null;
+  let bbUpSeries: ISeriesApi<"Line"> | null = null;
+  let bbLowSeries: ISeriesApi<"Line"> | null = null;
   let dlgSeq = 0;
   let dlgTimer: ReturnType<typeof setTimeout> | null = null;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
   let searchSeq = 0;
 
   const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  let miniChartEls: HTMLDivElement[] = [];
+
+  // 스크리너 미니 차트 — IntersectionObserver 로 뷰포트 진입 시 지연 마운트.
+  // /api/spark 는 services.getDaily(10분 캐시) 재사용. 캔들+다이버전스 마커용 OHLC 내림 (상세모달 일간차트와 1:1).
+  function mountMiniChart(container: HTMLDivElement, ticker: string) {
+    let chart: any = null;
+    let cancelled = false;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          io.disconnect();
+          if (cancelled) return;
+          const up = cssVar("--up"), down = cssVar("--down");
+          chart = createChart(container, {
+            autoSize: true, layout: { attributionLogo: false, background: { type: ColorType.Solid, color: "transparent" }, textColor: "transparent" },
+            grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+            rightPriceScale: { visible: false }, timeScale: { visible: false },
+            crosshair: { mode: CrosshairMode.Normal, vertLine: { visible: false }, horzLine: { visible: false } }, handleScale: false, handleScroll: false,
+          });
+          // 상세모달 일간차트와 1:1 — 캔들 + RSI/MACD 다이버전스 마커
+          const candle = chart.addSeries(CandlestickSeries, { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down, priceLineVisible: false, lastValueVisible: false });
+          const divMk = createSeriesMarkers(candle, []);
+          candle.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 } }); // 미니 차트 위아래 꽉 채움 (납작 방지)
+          fetch(`/api/spark?ticker=${encodeURIComponent(ticker)}`).then(r => r.json()).then(d => {
+            if (cancelled || !chart) return;
+            const pts: any[] = d.points || [];
+            if (pts.length > 1) {
+              candle.setData(pts.map((p: any) => ({ time: p.t as UTCTimestamp, open: p.o, high: p.h, low: p.l, close: p.c })));
+              const divs = computeDivergences(pts.map((p: any) => ({ t: p.t, o: p.o, h: p.h, l: p.l, c: p.c, v: p.v ?? null })));
+              const markers: SeriesMarker<any>[] = divs.map((dv) => ({
+                time: dv.t as UTCTimestamp,
+                position: dv.type === "bull" ? "belowBar" : "aboveBar",
+                shape: dv.type === "bull" ? "arrowUp" : "arrowDown",
+                color: dv.type === "bull" ? up : down,
+              }));
+              markers.sort((a, b) => (a.time as number) - (b.time as number));
+              divMk.setMarkers(markers);
+              chart.timeScale().fitContent();
+            }
+          }).catch(() => {});
+        }
+      }
+    }, { rootMargin: "120px" });
+    io.observe(container);
+    // 카드 dispose(<Show>/<For> 교체·새로고침·뷰전환) 시 인스턴스 누수 방지 —
+    // Solid 소유권에 연결된 onCleanup (페이지 언마운트용 miniChartEls 루프는 안전망으로 유지)
+    onCleanup(() => { cancelled = true; io.disconnect(); if (chart) { chart.remove(); chart = null; } });
+    miniChartEls.push(container);
+    (container as any)._cleanup = () => { cancelled = true; io.disconnect(); if (chart) { chart.remove(); chart = null; } };
+  }
 
   // ── 데이터 로드 ──
   async function load() {
@@ -122,11 +243,16 @@ export default function Dashboard() {
       const res = await fetch(`/api/data?filter=${encodeURIComponent(filterVal())}&max_price=${priceVal()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.status);
-      const filtered = data.items.filter((d: Row) => !FALSE_POSITIVE.has(d.ticker)).map((d: Row) => ({
+      const filtered = data.items.filter((d: Row) =>
+        // FALSE_POSITIVE(일반 단어·약어 충돌)는 제외하되, 실제 $5 미만 주식으로 확인된 티커는 보존
+        !FALSE_POSITIVE.has(d.ticker) || (d.quote && d.quote.price != null && d.quote.price < (Number(priceVal()) || 5))
+      ).map((d: Row) => ({
         ...d,
         price: d.quote ? d.quote.price : null,
         chg: d.quote ? d.quote.day_change_pct : null,
         vol: d.quote ? d.quote.volume : null,
+        bidAskPct: d.buy_ratio_pct ?? null,
+        bidAskTotal: d.bidAskTotal ?? null,
       }));
       setRows(filtered);
       setScanned(data.scanned);
@@ -172,238 +298,235 @@ export default function Dashboard() {
     return { scanned: scanned(), rowsLen: r.length, maxPrice: Number(priceVal()), topMover, topClean };
   });
 
-  // ── 정렬 ──
+  // ── 차트 (lightweight-charts) ──
+  const KST_TZ = "Asia/Seoul";
+  let currentTipFmt: Intl.DateTimeFormat = new Intl.DateTimeFormat("ko-KR", { timeZone: KST_TZ });
+  let baselineLine: IPriceLine | null = null;
+  let mqListener: ((e: MediaQueryListEvent) => void) | null = null;
+  let lastChartData: any = null;
+  let lastRange: string | null = null;
+
+  function applyTheme() {
+    if (!chart) return;
+    const ink3 = cssVar("--ink-3"), line = cssVar("--line"), card = cssVar("--card");
+    chart.applyOptions({
+      layout: { textColor: ink3, background: { type: ColorType.Solid, color: card } },
+      grid: { vertLines: { color: line }, horzLines: { color: line } },
+      rightPriceScale: { borderColor: line },
+      timeScale: { borderColor: line },
+      crosshair: { vertLine: { color: ink3, labelBackgroundColor: card }, horzLine: { color: ink3, labelBackgroundColor: card } },
+    });
+    const up = cssVar("--up"), down = cssVar("--down");
+    candleSeries?.applyOptions({ upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down });
+    volSeries?.applyOptions({ color: cssVar("--bar") });
+    ma20Series?.applyOptions({ color: cssVar("--accent") });
+    ma50Series?.applyOptions({ color: cssVar("--ma-slow") });
+    bbUpSeries?.applyOptions({ color: ink3 });
+    bbLowSeries?.applyOptions({ color: ink3 });
+  }
+
+  function ensureChart() {
+    if (chart || !chartContainerRef) return;
+    const ink3 = cssVar("--ink-3"), line = cssVar("--line"), card = cssVar("--card");
+    chart = createChart(chartContainerRef, {
+      autoSize: true,
+      layout: { attributionLogo: false, background: { type: ColorType.Solid, color: card }, textColor: ink3 },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: ink3, labelBackgroundColor: card },
+        horzLine: { color: ink3, labelBackgroundColor: card },
+      },
+      rightPriceScale: { borderColor: line },
+      timeScale: { borderColor: line, timeVisible: true, secondsVisible: false },
+      grid: { vertLines: { color: line }, horzLines: { color: line } },
+      localization: {
+        priceFormatter: (p: number) => fmtPrice(p),
+        timeFormatter: (t: number) => currentTipFmt.format(new Date(t * 1000)),
+      },
+    });
+    const up = cssVar("--up"), down = cssVar("--down");
+    candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
+    });
+    sessionBands = new SessionBandsPrimitive(cssVar("--session-tint"));
+    candleSeries.attachPrimitive(sessionBands);
+    divMarkers = createSeriesMarkers(candleSeries, []);
+    volSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", color: cssVar("--bar") });
+    chart.priceScale("").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    // 오버레이(MA/BB)는 가격 스케일 자동범위 산정에서 제외 — 캔들 데이터만으로 Y축을 정해
+    // 넓은 BB 밴드가 캔들을 찌그러뜨리는 것을 방지 (구 Canvas 차트와 동일 동작: 오버레이는 clip)
+    const lineOpts: any = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null };
+    ma20Series = chart.addSeries(LineSeries, { color: cssVar("--accent"), lineWidth: 2, ...lineOpts });
+    ma50Series = chart.addSeries(LineSeries, { color: cssVar("--ma-slow"), lineWidth: 2, lineStyle: LineStyle.Dotted, ...lineOpts });
+    bbUpSeries = chart.addSeries(LineSeries, { color: ink3, lineWidth: 1, ...lineOpts });
+    bbLowSeries = chart.addSeries(LineSeries, { color: ink3, lineWidth: 1, ...lineOpts });
+    chart.subscribeCrosshairMove(onCrosshair);
+  }
+
+  function destroyChart() {
+    if (chart) { chart.remove(); chart = null; }
+    candleSeries = volSeries = ma20Series = ma50Series = bbUpSeries = bbLowSeries = null;
+    divMarkers = null;
+    baselineLine = null;
+    sessionBands = null;
+  }
+
   function clearChart(msg?: string) {
-    chartState = null; lastDetail = null; hideTip();
-    const cv = canvasRef, wrap = chartWrapRef;
-    if (!cv || !wrap) return;
-    const w = wrap.clientWidth, h = 280, dpr = window.devicePixelRatio || 1;
-    cv.width = w * dpr; cv.height = h * dpr;
-    cv.style.width = w + "px"; cv.style.height = h + "px";
-    const ctx = cv.getContext("2d")!;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    if (msg) {
-      ctx.fillStyle = cssVar("--ink-3"); ctx.font = "13px sans-serif";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(msg, w / 2, h / 2);
-    }
+    hideTip();
+    lastRange = null;
+    lastChartData = null;
+    candleSeries?.setData([]);
+    divMarkers?.setMarkers([]);
+    volSeries?.setData([]);
+    ma20Series?.setData([]);
+    ma50Series?.setData([]);
+    bbUpSeries?.setData([]);
+    bbLowSeries?.setData([]);
+    if (baselineLine && candleSeries) { candleSeries.removePriceLine(baselineLine); baselineLine = null; }
+    setChartMsg(msg || "");
     setChartMeta("");
   }
 
   function hideTip() {
-    const hl = document.getElementById("hairline");
     const tip = document.getElementById("chart-tip");
-    if (hl) hl.hidden = true;
     if (tip) tip.hidden = true;
   }
 
-  function drawChart(data: any) {
-    const cv = canvasRef, wrap = chartWrapRef;
-    if (!cv || !wrap) return;
-    const w = wrap.clientWidth, h = 280, dpr = window.devicePixelRatio || 1;
-    cv.width = w * dpr; cv.height = h * dpr;
-    cv.style.width = w + "px"; cv.style.height = h + "px";
-    const ctx = cv.getContext("2d")!;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    chartState = null; hideTip();
+  function onCrosshair(param: MouseEventParams) {
+    const tip = document.getElementById("chart-tip");
+    const wrap = chartWrapRef;
+    if (!tip || !wrap || !param.time || !param.point || !candleSeries) { hideTip(); return; }
+    const d = param.seriesData.get(candleSeries) as { open?: number; high?: number; low?: number; close: number } | undefined;
+    if (!d) { hideTip(); return; }
+    const o = d.open ?? d.close;
+    tip.hidden = false;
+    tip.innerHTML = "";
+    const strong = document.createElement("strong"); strong.textContent = fmtPrice(d.close);
+    const ohlc = document.createElement("span");
+    ohlc.textContent = `시 ${fmtPrice(o)} · 고 ${fmtPrice(d.high ?? d.close)} · 저 ${fmtPrice(d.low ?? d.close)}`;
+    const vd = volSeries ? param.seriesData.get(volSeries) as { value?: number } | undefined : undefined;
+    const sub = document.createElement("span");
+    sub.textContent = currentTipFmt.format(new Date((param.time as number) * 1000)) + (vd?.value ? " · 거래량 " + fmtVol(vd.value) : "");
+    tip.append(strong, ohlc, sub);
+    tip.style.left = Math.min(param.point.x + 12, wrap.clientWidth - tip.offsetWidth - 8) + "px";
+    tip.style.top = (param.point.y - 64 < 4 ? param.point.y + 14 : param.point.y - 64) + "px";
+  }
 
-    const pts = data.points || [];
-    if (pts.length < 2) {
-      ctx.fillStyle = cssVar("--ink-3"); ctx.font = "13px sans-serif";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText("표시할 시세 데이터가 없습니다", w / 2, h / 2);
-      setChartMeta("");
-      return;
+  const axisTickFormatter = (range: string): TickMarkFormatter => (time, tickType) => {
+    const d = new Date((time as number) * 1000);
+    const opts: Intl.DateTimeFormatOptions = {};
+    if (range === "min") {
+      if (tickType <= 1) opts.month = "numeric";
+      else if (tickType === 2) { opts.month = "numeric"; opts.day = "numeric"; }
+      else { opts.hour = "2-digit"; opts.minute = "2-digit"; opts.hour12 = false; }
+    } else {
+      if (tickType === 0) opts.year = "numeric";
+      else if (tickType === 1) { opts.year = "2-digit"; opts.month = "numeric"; }
+      else { opts.month = "numeric"; opts.day = "numeric"; }
     }
+    return new Intl.DateTimeFormat("ko-KR", { timeZone: KST_TZ, ...opts }).format(d);
+  };
 
-    const M = { l: 10, r: 64, t: 14, b: 22 }, volH = 36;
-    const plotW = w - M.l - M.r, plotH = h - M.t - M.b;
-    const closes = pts.map((p: any) => p.c);
+  function drawChart(data: any) {
+    ensureChart();
+    if (!chart || !candleSeries) return;
+    // 레인지(봉 단위) 변경 시 가격 스케일 autoScale 재활성화 — 사용자가 수동으로
+    // 가격축을 줌/드래그해 autoScale이 꺼진 상태라도 새 데이터에 맞춰 세로 리핏.
+    // (동일 레인지 60초 자동갱신에선 사용자 줌을 존중해 건드리지 않음)
+    if (data.range !== lastRange) { candleSeries.priceScale().applyOptions({ autoScale: true }); lastRange = data.range; }
+    applyTheme();
+    hideTip();
+    setChartMsg("");
+
+    const rawPts: any[] = data.points || [];
+    if (rawPts.length < 2) { clearChart("표시할 시세 데이터가 없습니다"); return; }
+
+    // lightweight-charts 요구: time 정렬 + 고유 — 중복/미정렬 정리
+    const byT = new Map<number, any>();
+    for (const p of rawPts) byT.set(p.t, p);
+    const pts = [...byT.values()].sort((a, b) => a.t - b.t);
+
+    const isMin = data.range === "min";
+    chart.timeScale().applyOptions({ timeVisible: isMin, secondsVisible: false });
+    chart.applyOptions({ timeScale: { tickMarkFormatter: axisTickFormatter(data.range) } });
+
+    const TIP_OPT: Record<string, Intl.DateTimeFormatOptions> = {
+      min: { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false },
+      day: { year: "numeric", month: "numeric", day: "numeric" },
+      week: { year: "numeric", month: "numeric", day: "numeric" },
+      month: { year: "numeric", month: "numeric" },
+      year: { year: "numeric", month: "numeric" },
+    };
+    currentTipFmt = new Intl.DateTimeFormat("ko-KR", { timeZone: KST_TZ, ...(TIP_OPT[data.range] || TIP_OPT.day) });
+
+    const minPrice = Math.min(...pts.map((p: any) => p.l != null ? p.l : p.c));
+    candleSeries.applyOptions({ priceFormat: { type: "price", precision: minPrice < 1 ? 3 : 2, minMove: minPrice < 1 ? 0.001 : 0.01 } });
+
+    candleSeries.setData(pts.map((p: any) => ({
+      time: p.t as UTCTimestamp,
+      open: p.o != null ? p.o : p.c,
+      high: p.h != null ? p.h : Math.max(p.o != null ? p.o : p.c, p.c),
+      low: p.l != null ? p.l : Math.min(p.o != null ? p.o : p.c, p.c),
+      close: p.c,
+    })));
+    volSeries!.setData(pts.filter((p: any) => p.v).map((p: any) => ({ time: p.t as UTCTimestamp, value: p.v, color: cssVar("--bar") })));
+
+    const toLine = (key: string) => {
+      if (!data.overlays) return [];
+      const m = new Map<number, any>();
+      for (const o of data.overlays) if (o[key] != null) m.set(o.t, o);
+      return [...m.values()].sort((a, b) => a.t - b.t).map((o: any) => ({ time: o.t as UTCTimestamp, value: o[key] }));
+    };
+    ma20Series!.setData(toLine("s20"));
+    ma50Series!.setData(toLine("s50"));
+    bbUpSeries!.setData(toLine("bu"));
+    bbLowSeries!.setData(toLine("bl"));
+
+    const baseline = isMin && data.prev_close ? data.prev_close : pts[0].c;
+    if (baselineLine) { candleSeries.removePriceLine(baselineLine); baselineLine = null; }
+    baselineLine = candleSeries.createPriceLine({
+      price: baseline, color: cssVar("--ink-3"), lineStyle: LineStyle.Dashed, lineWidth: 1,
+      axisLabelVisible: true, title: isMin && data.prev_close ? "전일종가" : "",
+    });
+    lastChartData = data;
+
+    // 이슈 #48: 분봉(min) 일 때만 미국 프리/애프터마켓 세션 음영
+    if (isMin && pts.length) {
+      sessionBands?.setSessions(computeIntradaySessions(pts[0].t, pts[pts.length - 1].t));
+    } else {
+      sessionBands?.setSessions([]);
+    }
+    // 이슈 #57: RSI/MACD 다이버전스 마커
+    const up = cssVar("--up"), down = cssVar("--down");
+    const ptsForDiv = pts.map((p: any) => ({ t: p.t, o: p.o ?? p.c, h: p.h ?? p.c, l: p.l ?? p.c, c: p.c, v: p.v ?? null }));
+    const divs = computeDivergences(ptsForDiv);
+    const markers: SeriesMarker<any>[] = divs.map((d) => ({
+      time: d.t as UTCTimestamp,
+      position: d.type === "bull" ? "belowBar" : "aboveBar",
+      shape: d.type === "bull" ? "arrowUp" : "arrowDown",
+      color: d.type === "bull" ? up : down,   // 한국식: 강세=적, 약세=청
+    }));
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    divMarkers?.setMarkers(showDiv() ? markers : []);
+
+    chart.timeScale().fitContent();
+
     const highs = pts.map((p: any) => p.h != null ? p.h : p.c);
     const lows = pts.map((p: any) => p.l != null ? p.l : p.c);
-    const baseline = data.range === "min" && data.prev_close ? data.prev_close : pts[0].c;
-    let lo = Math.min(...lows, baseline), hi = Math.max(...highs, baseline);
-    const pad = (hi - lo) * 0.06 || hi * 0.02 || 0.01;
-    lo -= pad; hi += pad;
-    const slot = plotW / pts.length;
-    const x = (i: number) => M.l + (i + 0.5) * slot;
-    const y = (v: number) => M.t + (hi - v) / (hi - lo) * plotH;
-    const up = closes[closes.length - 1] >= baseline;
-    const lineColor = up ? cssVar("--up") : cssVar("--down");
-    const upColor = cssVar("--up"), downColor = cssVar("--down");
-    const gridColor = cssVar("--line"), ink3 = cssVar("--ink-3");
-
-    // 가로 그리드
-    ctx.font = "11px Consolas, monospace"; ctx.textBaseline = "middle"; ctx.textAlign = "left";
-    for (let g = 0; g <= 3; g++) {
-      const v = hi - (hi - lo) * g / 3, gy = y(v);
-      ctx.strokeStyle = gridColor; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(M.l, gy); ctx.lineTo(w - M.r, gy); ctx.stroke();
-      ctx.fillStyle = ink3;
-      ctx.fillText(fmtPrice(v), w - M.r + 8, gy);
-    }
-
-    // 프리·애프터마켓
-    if (data.range === "min" && data.regular_start && data.regular_end) {
-      let i0 = pts.findIndex((p: any) => p.t >= data.regular_start);
-      if (i0 === -1) i0 = pts.length;
-      let i1 = pts.findIndex((p: any) => p.t >= data.regular_end);
-      if (i1 === -1) i1 = pts.length;
-      const xAt = (i: number) => M.l + Math.max(0, Math.min(pts.length, i)) * slot;
-      ctx.font = "10px 'Segoe UI', sans-serif"; ctx.textBaseline = "top"; ctx.textAlign = "left";
-      const band = (x0: number, x1: number, label: string) => {
-        if (x1 - x0 < 2) return;
-        ctx.fillStyle = ink3; ctx.globalAlpha = 0.09;
-        ctx.fillRect(x0, M.t, x1 - x0, plotH);
-        ctx.globalAlpha = 1;
-        if (x1 - x0 > 44) { ctx.fillStyle = ink3; ctx.fillText(label, x0 + 5, M.t + 4); }
-      };
-      band(M.l, xAt(i0), "프리마켓");
-      band(xAt(i1), w - M.r, "애프터마켓");
-      ctx.font = "11px Consolas, monospace"; ctx.textBaseline = "middle";
-    }
-
-    // 거래량 바
-    const maxVol = Math.max(...pts.map((p: any) => p.v || 0));
-    if (maxVol > 0) {
-      ctx.fillStyle = cssVar("--bar"); ctx.globalAlpha = 0.35;
-      const bw = Math.max(slot - 1, 0.5);
-      pts.forEach((p: any, i: number) => {
-        if (!p.v) return;
-        const bh = p.v / maxVol * volH;
-        ctx.fillRect(x(i) - bw / 2, M.t + plotH - bh, bw, bh);
-      });
-      ctx.globalAlpha = 1;
-    }
-
-    // 기준선
-    ctx.setLineDash([4, 4]); ctx.strokeStyle = ink3; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(M.l, y(baseline)); ctx.lineTo(w - M.r, y(baseline)); ctx.stroke();
-    ctx.setLineDash([]);
-
-    // 오버레이 (이동평균·볼린저)
-    const maFast = cssVar("--accent"), maSlow = cssVar("--ma-slow");
-    let ovLegend: [string, string, number[]][] | null = null;
-    if (data.overlays && data.overlays.length) {
-      const byT = new Map(data.overlays.map((o: any) => [o.t, o]));
-      const val = (p: any, k: string) => { const o = byT.get(p.t); return o && o[k] != null ? o[k] : null; };
-      ctx.save();
-      ctx.beginPath(); ctx.rect(M.l, M.t, plotW, plotH); ctx.clip();
-      let run: [number, number, number][] = [];
-      const flushBand = () => {
-        if (run.length >= 2) {
-          ctx.beginPath();
-          run.forEach(([i, u], j) => j ? ctx.lineTo(x(i), y(u)) : ctx.moveTo(x(i), y(u)));
-          for (let j = run.length - 1; j >= 0; j--) ctx.lineTo(x(run[j][0]), y(run[j][2]));
-          ctx.closePath();
-          ctx.fillStyle = ink3; ctx.globalAlpha = 0.08; ctx.fill(); ctx.globalAlpha = 1;
-        }
-        run = [];
-      };
-      pts.forEach((p: any, i: number) => {
-        const u = val(p, "bu"), l = val(p, "bl");
-        if (u != null && l != null) run.push([i, u, l]); else flushBand();
-      });
-      flushBand();
-      const drawMA = (key: string, color: string, dash: number[]) => {
-        ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.lineJoin = "round";
-        ctx.setLineDash(dash);
-        ctx.beginPath();
-        let started = false;
-        pts.forEach((p: any, i: number) => {
-          const v = val(p, key);
-          if (v == null) { started = false; return; }
-          if (started) ctx.lineTo(x(i), y(v)); else { ctx.moveTo(x(i), y(v)); started = true; }
-        });
-        ctx.stroke();
-        ctx.setLineDash([]);
-      };
-      drawMA("s20", maFast, []);
-      drawMA("s50", maSlow, [2, 3]);
-      ctx.restore();
-      ovLegend = [["20일선", maFast, []], ["50일선", maSlow, [2, 3]], ["볼린저(20·2σ)", ink3, []]];
-    }
-
-    // 캔들스틱
-    const bodyW = Math.max(Math.min(slot * 0.65, 12), 1.5);
-    pts.forEach((p: any, i: number) => {
-      const o = p.o != null ? p.o : p.c;
-      const hh = p.h != null ? p.h : Math.max(o, p.c);
-      const ll = p.l != null ? p.l : Math.min(o, p.c);
-      const color = p.c >= o ? upColor : downColor;
-      const cx = x(i);
-      ctx.strokeStyle = color; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(cx, y(hh)); ctx.lineTo(cx, y(ll)); ctx.stroke();
-      const yO = y(o), yC = y(p.c);
-      ctx.fillStyle = color;
-      ctx.fillRect(cx - bodyW / 2, Math.min(yO, yC), bodyW, Math.max(Math.abs(yO - yC), 1));
-    });
-
-    // 오버레이 범례
-    if (ovLegend) {
-      ctx.font = "10px 'Segoe UI', sans-serif"; ctx.textBaseline = "middle"; ctx.textAlign = "left";
-      let lx0 = M.l + 6;
-      const lyy = M.t + 8;
-      ovLegend.forEach(([label, color, dash]) => {
-        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash(dash);
-        ctx.beginPath(); ctx.moveTo(lx0, lyy); ctx.lineTo(lx0 + 14, lyy); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = ink3;
-        ctx.fillText(label, lx0 + 18, lyy);
-        lx0 += 18 + ctx.measureText(label).width + 14;
-      });
-    }
-
-    // 현재가 태그
-    const last = closes[closes.length - 1], ly = y(last);
-    ctx.fillStyle = lineColor;
-    ctx.font = "bold 11px Consolas, monospace";
-    const tag = fmtPrice(last), tw = ctx.measureText(tag).width;
-    ctx.beginPath(); ctx.roundRect(w - M.r + 4, ly - 9, tw + 8, 18, 4); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.fillText(tag, w - M.r + 8, ly);
-
-    // X축
-    const tz = "Asia/Seoul";
-    const AXIS_OPT: Record<string, any> = {
-      min:   { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false },
-      day:   { month: "numeric", day: "numeric" },
-      week:  { year: "2-digit", month: "numeric" },
-      month: { year: "numeric" },
-      year:  { year: "numeric" },
-    };
-    const TIP_OPT: Record<string, any> = {
-      min:   { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false },
-      day:   { year: "numeric", month: "numeric", day: "numeric" },
-      week:  { year: "numeric", month: "numeric", day: "numeric" },
-      month: { year: "numeric", month: "numeric" },
-      year:  { year: "numeric", month: "numeric" },
-    };
-    const axisFmt = new Intl.DateTimeFormat("ko-KR", { timeZone: tz, ...(AXIS_OPT[data.range] || AXIS_OPT.day) });
-    const tipFmt = new Intl.DateTimeFormat("ko-KR", { timeZone: tz, ...(TIP_OPT[data.range] || TIP_OPT.day) });
-    ctx.fillStyle = ink3; ctx.font = "11px 'Segoe UI', sans-serif"; ctx.textBaseline = "top";
-    [0, 1/3, 2/3, 1].forEach(f => {
-      const i = Math.round(f * (pts.length - 1));
-      ctx.textAlign = f === 0 ? "left" : f === 1 ? "right" : "center";
-      ctx.fillText(axisFmt.format(new Date(pts[i].t * 1000)), x(i), M.t + plotH + 7);
-    });
-
     const rangeHi = Math.max(...highs), rangeLo = Math.min(...lows);
-    const span = `${tipFmt.format(new Date(pts[0].t * 1000))} ~ ${tipFmt.format(new Date(pts[pts.length - 1].t * 1000))}`;
+    const span = `${currentTipFmt.format(new Date(pts[0].t * 1000))} ~ ${currentTipFmt.format(new Date(pts[pts.length - 1].t * 1000))}`;
     setChartMeta(
       `${CANDLE_LABEL[data.range] || ""} ${span}` +
       ` · 고가 ${fmtPrice(rangeHi)} · 저가 ${fmtPrice(rangeLo)}` +
-      (data.range === "min" && data.prev_close ? ` · 전일 종가 ${fmtPrice(data.prev_close)} (점선)` : " · 점선은 구간 시작가") +
-      " · 한국시간 기준" + (data.range === "min" ? ", 프리·애프터마켓 포함" : "")
+      (isMin && data.prev_close ? ` · 전일 종가 ${fmtPrice(data.prev_close)} (점선)` : " · 점선은 구간 시작가") +
+      " · 한국시간 기준"
     );
-    chartState = { pts, x, y, M, w, h, slot, tipFmt };
   }
 
   // ── 상세 모달 ──
   function openDetail(ticker: string, fallbackName?: string) {
     const d = rows().find(r => r.ticker === ticker) || null;
-    setDlgTicker(ticker); setDlgRange("min"); lastDetail = null;
+    setDlgTicker(ticker); setDlgRange("min");
     setDlgName((d && d.name) || fallbackName || "");
     setDlgPrice(d && d.price != null ? fmtPrice(d.price) : "");
     setDlgChgHtml(d && d.chg != null
@@ -422,11 +545,13 @@ export default function Dashboard() {
     clearChart();
     loadDetail();
     loadPosts(ticker);
+    loadFundamentals(ticker);
   }
 
   function closeDetail() {
     setDlgTicker(""); dlgSeq++;
     clearTimeout(dlgTimer!); dlgTimer = null;
+    lastChartData = null;
     hideTip();
     setDlgOpen(false);
     document.body.classList.remove("modal-open");
@@ -442,7 +567,6 @@ export default function Dashboard() {
       const data = await res.json();
       if (seq !== dlgSeq) return;
       if (!res.ok) throw new Error(data.error || res.status);
-      lastDetail = data;
       setDlgName(prev => prev || data.name || "");
       if (data.price != null) {
         setDlgPrice(fmtPrice(data.price));
@@ -485,6 +609,7 @@ export default function Dashboard() {
   async function loadPosts(ticker: string) {
     setRedditPosts([]); setRedditEmpty("불러오는 중…");
     setNewsPosts([]); setNewsEmpty("불러오는 중…");
+    setStSent(null); setStEmpty(""); setStEnabled(false);
     try {
       const res = await fetch(`/api/posts?ticker=${encodeURIComponent(ticker)}`);
       const data = await res.json();
@@ -494,10 +619,33 @@ export default function Dashboard() {
       setRedditEmpty(data.reddit_error ? "레딧 불러오기 실패 (잠시 후 다시 시도해 주세요)" : "최근 1개월 내 관련 게시물이 없습니다");
       setNewsPosts(data.news || []);
       setNewsEmpty(data.news_error ? "뉴스 불러오기 실패" : "관련 뉴스가 없습니다");
+      setStSent(data.stocktwits || null);
+      setStEnabled(!!data.st_enabled);
+      setStEmpty(data.st_error ? "StockTwits 불러오기 실패" : (data.stocktwits ? "" : "StockTwits 데이터 없음"));
     } catch (err: any) {
       if (dlgTicker() !== ticker) return;
       setRedditPosts([]); setRedditEmpty("불러오기 실패: " + err.message);
       setNewsPosts([]); setNewsEmpty("불러오기 실패: " + err.message);
+      setStSent(null); setStEmpty("불러오기 실패: " + err.message);
+    }
+  }
+
+  // ── SEC 펀더멘털(공시·재무) ── loadPosts 와 동일 패턴. EDGAR 장애는 독립.
+  async function loadFundamentals(ticker: string) {
+    setFund(null); setFundError(""); setFundLoading(true);
+    try {
+      const res = await fetch(`/api/fundamentals?ticker=${encodeURIComponent(ticker)}`);
+      const data = await res.json();
+      if (dlgTicker() !== ticker) return;
+      if (!res.ok) throw new Error(data.error || res.status);
+      setFund(data.data || null);
+      setFundError(data.error || "");
+    } catch (err: any) {
+      if (dlgTicker() !== ticker) return;
+      setFund(null);
+      setFundError("불러오기 실패: " + err.message);
+    } finally {
+      if (dlgTicker() === ticker) setFundLoading(false);
     }
   }
 
@@ -598,31 +746,6 @@ export default function Dashboard() {
     });
   }
 
-  // ── 차트 호버 ──
-  function onChartMove(e: PointerEvent) {
-    if (!chartState || !canvasRef) return;
-    const rect = canvasRef.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const { pts, M, w, h, slot } = chartState;
-    const i = Math.max(0, Math.min(pts.length - 1, Math.floor((px - M.l) / slot)));
-    const cx = chartState.x(i);
-    const hl = document.getElementById("hairline");
-    if (hl) { hl.hidden = false; hl.style.left = cx + "px"; hl.style.top = M.t + "px"; hl.style.height = (h - M.t - M.b) + "px"; }
-    const tip = document.getElementById("chart-tip");
-    if (tip) {
-      tip.hidden = false; tip.innerHTML = "";
-      const p = pts[i], o = p.o != null ? p.o : p.c;
-      const strong = document.createElement("strong"); strong.textContent = fmtPrice(p.c);
-      const ohlc = document.createElement("span");
-      ohlc.textContent = `시 ${fmtPrice(o)} · 고 ${fmtPrice(p.h != null ? p.h : p.c)} · 저 ${fmtPrice(p.l != null ? p.l : p.c)}`;
-      const sub = document.createElement("span");
-      sub.textContent = chartState.tipFmt.format(new Date(p.t * 1000)) + (p.v ? " · 거래량 " + fmtVol(p.v) : "");
-      tip.append(strong, ohlc, sub);
-      tip.style.left = Math.min(cx + 12, w - tip.offsetWidth - 8) + "px";
-      const ty = chartState.y(p.c);
-      tip.style.top = (ty - 64 < 4 ? ty + 14 : ty - 64) + "px";
-    }
-  }
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
@@ -635,18 +758,23 @@ export default function Dashboard() {
     if (!(e.target as HTMLElement).closest(".search")) setSearchDrop(false);
   }
 
-  function onResize() {
-    if (lastDetail && dlgOpen()) drawChart(lastDetail);
-  }
 
   // ── 생명주기 ──
   onMount(() => {
+    try {
+      const saved = localStorage.getItem("raddit-view");
+      if (saved === "grid" || saved === "alerts") setViewMode(saved);
+    } catch {}
     load();
     fetch("/api/version").then(r => r.json()).then(d => { if (d.version) setVersion(`v${d.version}`); }).catch(() => {});
     fetch("/api/stars").then(r => r.json()).then(d => { if (d.stars != null) setStarCount(d.stars); }).catch(() => {});
     document.addEventListener("keydown", onKeydown);
     document.addEventListener("click", onDocClick);
-    if (typeof window !== "undefined") window.addEventListener("resize", onResize);
+    if (typeof window !== "undefined" && window.matchMedia) {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      mqListener = () => { applyTheme(); if (lastChartData) drawChart(lastChartData); };
+      mq.addEventListener("change", mqListener);
+    }
   });
 
   onCleanup(() => {
@@ -654,7 +782,14 @@ export default function Dashboard() {
       document.removeEventListener("keydown", onKeydown);
       document.removeEventListener("click", onDocClick);
     }
-    if (typeof window !== "undefined") window.removeEventListener("resize", onResize);
+    if (typeof window !== "undefined" && window.matchMedia && mqListener) {
+      window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", mqListener);
+    }
+    destroyChart();
+    // 스크리너 그리드 미니 차트 정리 (페이지 언마운트 시). 뷰 전환으로 분리된
+    // 카드는 새 그리드 렌더링 시 재마운트되므로 v1에선 전환 중 누수를 허용.
+    for (const el of miniChartEls) { const c = (el as any)._cleanup; if (c) c(); }
+    miniChartEls = [];
     if (dlgTimer) clearTimeout(dlgTimer);
     if (searchTimer) clearTimeout(searchTimer);
   });
@@ -697,6 +832,11 @@ export default function Dashboard() {
           </select>
         </label>
         <button class="refresh" id="btn-refresh" disabled={loading()} onClick={load}>새로고침</button>
+        <div class="view-toggle" role="group" aria-label="보기 모드">
+          <button type="button" class={viewMode() === "list" ? "active" : ""} onClick={() => switchView("list")}>목록</button>
+          <button type="button" class={viewMode() === "grid" ? "active" : ""} onClick={() => switchView("grid")}>스크리너</button>
+          <button type="button" class={viewMode() === "alerts" ? "active" : ""} onClick={() => switchView("alerts")}>⚡ 급등</button>
+        </div>
         <div class="search">
           <input
             placeholder="티커·종목명 검색 (예: TSLA, tesla)"
@@ -766,8 +906,11 @@ export default function Dashboard() {
       <div class="board">
         <div class="board-head">
           <h2>{boardTitle()}</h2>
-          <span class="hint">열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석</span>
+          <span class="hint">{viewMode() === "list" ? "열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석"
+            : viewMode() === "grid" ? "카드 클릭 → 실시간 차트와 분석"
+            : "이상 급등 감지 이력 · 행 클릭 → 실시간 차트와 분석"}</span>
         </div>
+        <Show when={viewMode() === "list"}>
         <div class="scroller">
           <table>
             <thead><tr>
@@ -803,6 +946,12 @@ export default function Dashboard() {
                       <td class="left"><span class="tk">{d.ticker}</span><br /><span class="name">{d.name || ""}</span></td>
                       <td>{d.price != null ? "$" + d.price.toFixed(2) : "-"}</td>
                       <td innerHTML={chgHtml}></td>
+                      <td>{d.bidAskPct != null ? (
+                        <div class="bidask-cell" classList={{ thin: (d.bidAskTotal ?? 0) < 100 }} title={(d.bidAskTotal ?? 0) < 100 ? "호가잔량 얕음 — 참고용" : `매수 ${d.bidAskPct!.toFixed(0)}% · 매도 ${(100 - d.bidAskPct!).toFixed(0)}%`}>
+                          <div class="bidask-bar"><div class="bidask-buy" style={{ width: `${d.bidAskPct}%` }}></div></div>
+                          <span class="bidask-num">{d.bidAskPct.toFixed(0)}</span>
+                        </div>
+                      ) : "-"}</td>
                       <td>
                         <div class="mention-cell">
                           <span class="mdelta">{delta}</span>
@@ -820,6 +969,80 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
+        </Show>
+        <Show when={viewMode() === "grid"}>
+          <div class="screener-grid">
+            <For each={sortedRows().slice(0, 60)}>{(d: Row) => {
+              const mv = rankMove(d);
+              const up = (d.chg ?? 0) >= 0;
+              return (
+                <div class="srt-card" role="button" tabindex={0}
+                  onClick={() => openDetail(d.ticker)}
+                  onKeyDown={(e) => { if (e.key === "Enter") openDetail(d.ticker); }}
+                >
+                  <div class="srt-head">
+                    <span class="srt-tk">{d.ticker}</span>
+                    <span class="srt-name">{d.name || ""}</span>
+                    <span class={`srt-chg ${up ? "up" : "down"}`}>{d.price != null ? fmtPrice(d.price) : "-"} {d.chg != null ? (up ? "+" : "") + d.chg.toFixed(1) + "%" : ""}</span>
+                  </div>
+                  <div class="mini-chart" ref={(el: HTMLDivElement) => mountMiniChart(el, d.ticker)}></div>
+                  <div class="srt-foot">
+                    <span>언급 {d.mentions ?? 0}</span>
+                    <span>순위 {d.rank ?? "-"} <span class={`pill ${mv.cls}`}>{mv.txt}</span></span>
+                    <span>호가 {d.bidAskPct != null ? d.bidAskPct.toFixed(0) + "%" : "-"}</span>
+                  </div>
+                </div>
+              );
+            }}</For>
+          </div>
+        </Show>
+        <Show when={viewMode() === "alerts"}>
+          <div class="scroller">
+            <table>
+              <thead><tr>
+                <th>감지 시각</th><th class="left">종목</th><th>세션</th><th>상승률</th>
+                <th>거래량</th><th class="left">뉴스</th><th>감지가</th><th>이후 등락</th>
+              </tr></thead>
+              <tbody>
+                <Show when={alertRows().length} fallback={
+                  <tr><td class="empty" colspan="8">
+                    {alertsErr() || (alertsOpen() === false
+                      ? "미국 장 외 시간입니다 (감시: 평일 ET 4:00~20:00)"
+                      : "아직 감지된 급등이 없습니다")}
+                  </td></tr>
+                }>
+                  <For each={alertRows()}>{(a) => (
+                    <tr tabindex="0"
+                      onClick={() => openDetail(a.ticker)}
+                      onKeyDown={(e) => { if (e.key === "Enter") openDetail(a.ticker); }}
+                    >
+                      <td class="dim">{new Date(a.detected_at * 1000).toLocaleTimeString("ko-KR",
+                        { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit" })}</td>
+                      <td class="left"><span class="tk">{a.ticker}</span><br /><span class="name">{a.name || ""}</span></td>
+                      <td><span class="pill flat">{a.market_state === "PRE" ? "프리" : a.market_state === "REGULAR" ? "정규" : "애프터"}</span></td>
+                      <td><span class="pill up">+{a.change_pct.toFixed(1)}%</span></td>
+                      <td class="dim">{a.vol_ratio != null ? `×${a.vol_ratio.toFixed(1)}` : "-"}</td>
+                      <td class="left">
+                        {a.news === "none"
+                          ? <span class="news-badge lead">뉴스 없음 · 선행 가능성</span>
+                          : a.news === "recent"
+                            ? <a class="news-badge has" href={a.news_url ?? "#"} target="_blank"
+                                rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                                title={a.news_title ?? ""}>뉴스 있음</a>
+                            : <span class="news-badge">확인 실패</span>}
+                      </td>
+                      <td>${a.price.toFixed(2)}</td>
+                      <td>{a.since_pct != null
+                        ? <span class={`pill ${a.since_pct > 0 ? "up" : a.since_pct < 0 ? "down" : "flat"}`}>
+                            {(a.since_pct > 0 ? "+" : "") + a.since_pct.toFixed(1)}%</span>
+                        : "-"}</td>
+                    </tr>
+                  )}</For>
+                </Show>
+              </tbody>
+            </table>
+          </div>
+        </Show>
       </div>
 
       {/* Changelog 오버레이 */}
@@ -854,13 +1077,11 @@ export default function Dashboard() {
             <For each={RANGES}>{([v, l]) => (
               <button class={dlgRange() === v ? "active" : ""} onClick={() => { setDlgRange(v); loadDetail(); }}>{l}</button>
             )}</For>
+            <button class={"div-toggle" + (showDiv() ? " active" : "")} onClick={() => { setShowDiv((v) => !v); if (lastChartData) drawChart(lastChartData); }}>다이버전스</button>
           </div>
-          <div id="chart-wrap" classList={{ dim: chartDim() }} ref={chartWrapRef}
-            onPointerMove={onChartMove}
-            onPointerLeave={hideTip}
-          >
-            <canvas ref={canvasRef}></canvas>
-            <div class="hairline" id="hairline" hidden></div>
+          <div id="chart-wrap" classList={{ dim: chartDim() }} ref={chartWrapRef}>
+            <div class="chart-canvas" ref={chartContainerRef}></div>
+            <div class="chart-msg" hidden={!chartMsg()}>{chartMsg()}</div>
             <div class="tip" id="chart-tip" hidden></div>
           </div>
           <div class="chart-meta">{chartMeta()}</div>
@@ -869,6 +1090,22 @@ export default function Dashboard() {
               <div class="bidask-bar"><div class="bidask-buy" style={{ width: `${bidAskPct()}%` }}></div></div>
               <div class="bidask-label">호가 잔량 매수 {bidAskPct()!.toFixed(0)}% · 매도 {(100 - bidAskPct()!).toFixed(0)}%</div>
             </div>
+          </Show>
+          <Show when={stEnabled() && stSent()} fallback={<Show when={stEnabled() && stEmpty()}><p class="dlg-status">{stEmpty()}</p></Show>}>
+            <h3 class="dlg-sub">StockTwits 여론 <Show when={stSent()!.tagged > 0}><span class="sent-note">{stSent()!.bullish_pct!.toFixed(0)}% 매수 · {(100 - stSent()!.bullish_pct!).toFixed(0)}% 매도 (태그 {stSent()!.tagged}건)</span></Show></h3>
+            <Show when={(stSent()!.tagged ?? 0) > 0}>
+              <div class="sent-bar"><div class="sent-bull" style={{ width: `${stSent()!.bullish_pct}%` }}></div></div>
+            </Show>
+            <Show when={stSent()!.messages.length} fallback={<p class="dlg-status">최근 메시지가 없습니다</p>}>
+              <ul class="post-list">
+                <For each={stSent()!.messages}>{(m) => (
+                  <li>
+                    <span class="st-body">{m.body}</span>
+                    <span class="post-meta">{["@" + m.username, timeAgo(m.ts), m.sentiment === "Bullish" ? "매수" : m.sentiment === "Bearish" ? "매도" : null].filter(Boolean).join(" · ")}</span>
+                  </li>
+                )}</For>
+              </ul>
+            </Show>
           </Show>
           <div class="dlg-status">{dlgStatus()}</div>
           <h3 class="dlg-sub">기술적 분석</h3>
@@ -908,6 +1145,34 @@ export default function Dashboard() {
               )}</For>
             </Show>
           </ul>
+          <Show when={fundLoading()}><p class="dlg-status">재무/공시 불러오는 중…</p></Show>
+          <Show when={fundError()}><p class="dlg-status">{fundError()}</p></Show>
+          <Show when={!fundLoading()}>
+            <Show when={fund()?.cik} fallback={<p class="dlg-status">SEC 공시 의무 없음 (OTC/소형주 가능)</p>}>
+              <h3 class="dlg-sub">재무 하이라이트 <Show when={fund()?.financials?.as_of}><span class="dlg-note">{fund()!.financials!.as_of} 기준</span></Show></h3>
+              <Show when={fund()?.financials} fallback={<p class="dlg-status">재무 데이터가 없습니다</p>}>
+                <div class="ind-grid">
+                  <div class="ind"><div class="label">매출 TTM</div><div class="value">{fmtM(fund()!.financials!.revenues_ttm)}</div></div>
+                  <div class="ind"><div class="label">순이익 TTM</div><div class="value">{fmtM(fund()!.financials!.net_income_ttm)}</div></div>
+                  <div class="ind"><div class="label">총자산</div><div class="value">{fmtM(fund()!.financials!.total_assets)}</div></div>
+                  <div class="ind"><div class="label">EPS</div><div class="value">{fund()!.financials!.eps != null ? "$" + fund()!.financials!.eps.toFixed(2) : "-"}</div></div>
+                  <div class="ind"><div class="label">현금·단기투자</div><div class="value">{fmtM(fund()!.financials!.cash)}</div></div>
+                  <div class="ind"><div class="label">영업현금흐름 TTM</div><div class="value">{fmtM(fund()!.financials!.operating_cf_ttm)}</div></div>
+                </div>
+              </Show>
+              <h3 class="dlg-sub">SEC 공시</h3>
+              <Show when={(fund()?.filings.length ?? 0) > 0} fallback={<p class="dlg-status">최근 관련 공시가 없습니다</p>}>
+                <ul class="post-list">
+                  <For each={fund()!.filings}>{(f) => (
+                    <li>
+                      <a href={f.url} target="_blank" rel="noopener noreferrer">{f.form}{f.docDesc ? " · " + f.docDesc : ""}</a>
+                      <span class="post-meta">{f.date}</span>
+                    </li>
+                  )}</For>
+                </ul>
+              </Show>
+            </Show>
+          </Show>
           <p class="disclaimer">1년 일봉 기준으로 자동 계산된 참고 지표이며, 투자 판단의 근거가 아닙니다.</p>
         </div>
       </div>

@@ -17,6 +17,8 @@ const NEWS_SEARCH_URL = (q: string) =>
   `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=0&newsCount=25`;
 const SYMBOL_SEARCH_URL = (q: string) =>
   `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
+const STOCKTWITS_URL = (ticker: string) =>
+  `https://api.stocktwits.com/api/2/streams/symbol/${encodeURIComponent(ticker)}.json?limit=30`;
 
 const REDDIT_RPC_URL = process.env.REDDIT_RPC_URL?.replace(/\/$/, "");
 const REDDIT_RPC_KEY = process.env.REDDIT_RPC_KEY;
@@ -25,9 +27,9 @@ const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-async function getJson(url: string): Promise<any> {
+async function getJson(url: string, init?: { headers?: Record<string, string> }): Promise<any> {
   const res = await fetch(url, {
-    headers: { "User-Agent": BROWSER_UA },
+    headers: { "User-Agent": BROWSER_UA, ...(init?.headers ?? {}) },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`업스트림 응답 ${res.status} (${new URL(url).hostname})`);
@@ -67,6 +69,8 @@ export interface MentionItem {
   rank_24h_ago?: number;
   mentions_24h_ago?: number;
   quote?: Quote | null;
+  buy_ratio_pct?: number | null;
+  bidAskTotal?: number | null;
 }
 
 export async function fetchMentions(filter: string): Promise<MentionItem[]> {
@@ -85,23 +89,50 @@ export interface Quote {
   price: number;
   day_change_pct: number | null;
   volume: number | null;
+  type?: string | null;
+  exchange?: string | null;
 }
 
-export async function fetchQuote(ticker: string): Promise<Quote | null> {
-  try {
-    const data = await getJson(YAHOO_URL(ticker));
-    const meta = data.chart.result[0].meta;
-    const price = meta.regularMarketPrice;
-    const prev = meta.previousClose || meta.chartPreviousClose;
-    if (price == null) return null;
-    return {
-      price,
-      day_change_pct: prev ? ((price - prev) / prev) * 100 : null,
-      volume: meta.regularMarketVolume ?? null,
-    };
-  } catch {
-    return null;
-  }
+/**
+ * Yahoo spark 배치 API로 여러 티커의 시세를 한 번에 조회 (비인증, chunkSize 심볼/요청).
+ * v8/chart per-ticker 대비 요청 수를 chunkSize 배 절감. 청크 단위 실패는 해당 청크만 skip.
+ */
+const SPARK_URL = (symbols: string) =>
+  `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbols)}&range=1d&interval=1d`;
+
+export async function attachQuotesBatch(items: MentionItem[], chunkSize = 20, concurrency = 5): Promise<void> {
+  const chunks: MentionItem[][] = [];
+  for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const chunk = chunks[next++];
+      try {
+        const data = await getJson(SPARK_URL(chunk.map(c => c.ticker).join(",")));
+        const metaByTicker = new Map<string, any>();
+        for (const r of data?.spark?.result ?? []) {
+          const meta = r.response?.[0]?.meta;
+          if (meta?.regularMarketPrice != null) metaByTicker.set(r.symbol, meta);
+        }
+        for (const c of chunk) {
+          const meta = metaByTicker.get(c.ticker);
+          if (!meta) continue;
+          const price = meta.regularMarketPrice;
+          const prev = meta.chartPreviousClose ?? meta.previousClose;
+          c.quote = {
+            price,
+            day_change_pct: prev ? ((price - prev) / prev) * 100 : null,
+            volume: meta.regularMarketVolume ?? null,
+            type: meta.instrumentType ?? null,
+            exchange: meta.exchangeName ?? null,
+          };
+        }
+      } catch {
+        // 청크 실패(레이트리밋 등) 시 해당 청크만 skip
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
 export interface BidAsk {
@@ -144,17 +175,127 @@ export async function fetchBidAsk(ticker: string, retry = true): Promise<BidAsk 
     return null;
   }
 }
-
-export async function attachQuotes(items: MentionItem[], concurrency = 10): Promise<void> {
+/**
+ * 호가잔량(매수/매도) 비율을 v7/quote 배치로 조회해 items에 채운다 (crumb 인증).
+ * 표시 대상(필터 후) items에만 호출 — 페니모드 ~18건, 전체모드 ~200건.
+ * crumb 발급 실패/청크 실패 시 해당 건 buy_ratio_pct=null.
+ */
+export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, concurrency = 5): Promise<void> {
+  if (!items.length) return;
+  let auth: { cookie: string; crumb: string };
+  try {
+    auth = await getYahooAuth();
+  } catch {
+    return;
+  }
+  const fetchChunk = (chunk: MentionItem[], a: { cookie: string; crumb: string }) =>
+    fetch(`${YAHOO_QUOTE_URL(chunk.map(c => c.ticker).join(","))}&crumb=${encodeURIComponent(a.crumb)}`, {
+      headers: { "User-Agent": BROWSER_UA, Cookie: a.cookie },
+      signal: AbortSignal.timeout(10000),
+    });
+  const applyChunk = (chunk: MentionItem[], data: any) => {
+    const byTicker = new Map<string, any>();
+    for (const q of data?.quoteResponse?.result ?? []) byTicker.set(q.symbol, q);
+    for (const c of chunk) {
+      const q = byTicker.get(c.ticker);
+      if (!q) continue;
+      const ba = parseBidAsk(q);
+      c.buy_ratio_pct = ba.buy_ratio_pct;
+      const total = (ba.bid_size ?? 0) + (ba.ask_size ?? 0);
+      c.bidAskTotal = total > 0 ? total : null;
+    }
+  };
+  const chunks: MentionItem[][] = [];
+  for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
   let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        items[i].quote = await fetchQuote(items[i].ticker);
+  const worker = async () => {
+    while (next < chunks.length) {
+      const chunk = chunks[next++];
+      try {
+        let res = await fetchChunk(chunk, auth);
+        // crumb 조기 만료(401/403) 시 재발급 후 1회 재시도 — fetchBidAsk(단일)와 동일 패턴
+        if (res.status === 401 || res.status === 403) {
+          yahooAuth = null;
+          try { auth = await getYahooAuth(); res = await fetchChunk(chunk, auth); } catch { continue; }
+        }
+        if (!res.ok) continue;
+        applyChunk(chunk, await res.json());
+      } catch {
+        // 청크 실패 시 해당 청크 호가 null
       }
-    }),
-  );
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
+}
+
+// ── 급등 탐지용 배치 시세 (#74) ──
+
+export interface SpikeQuote {
+  price: number | null;        // regularMarketPrice
+  ext_price: number | null;    // 세션에 따른 pre/postMarket 가격
+  volume: number | null;       // regularMarketVolume (당일 누적)
+  avg_vol_10d: number | null;  // averageDailyVolume10Day
+  market_state: string | null;
+  name: string | null;
+}
+
+/** v7 quote 응답 1건 → 급등 감지에 필요한 필드만. 세션에 따라 유효한 장외가 선택. */
+export function parseSpikeQuote(q: any): SpikeQuote {
+  const state: string | null = q.marketState ?? null;
+  let ext: number | null = null;
+  if (state === "PRE" && q.preMarketPrice != null) ext = q.preMarketPrice;
+  else if (["POST", "POSTPOST", "CLOSED"].includes(state ?? "") && q.postMarketPrice != null) {
+    ext = q.postMarketPrice;
+  }
+  return {
+    price: q.regularMarketPrice ?? null,
+    ext_price: ext == null ? null : round4(ext),
+    volume: q.regularMarketVolume ?? null,
+    avg_vol_10d: q.averageDailyVolume10Day ?? null,
+    market_state: state,
+    name: q.shortName ?? q.longName ?? null,
+  };
+}
+
+/**
+ * 급등 감시 대상 시세를 v7/quote 배치로 조회 (crumb 인증 — attachBidAskBatch와 동일 패턴).
+ * 청크 실패는 해당 청크만 누락. crumb 발급 실패 시 빈 Map (폴러가 다음 주기에 재시도).
+ */
+export async function fetchSpikeQuotes(
+  tickers: string[], chunkSize = 60,
+): Promise<Map<string, SpikeQuote>> {
+  const out = new Map<string, SpikeQuote>();
+  if (!tickers.length) return out;
+  let auth: { cookie: string; crumb: string };
+  try {
+    auth = await getYahooAuth();
+  } catch {
+    return out;
+  }
+  const fetchChunk = (chunk: string[], a: { cookie: string; crumb: string }) =>
+    fetch(`${YAHOO_QUOTE_URL(chunk.join(","))}&crumb=${encodeURIComponent(a.crumb)}`, {
+      headers: { "User-Agent": BROWSER_UA, Cookie: a.cookie },
+      signal: AbortSignal.timeout(10000),
+    });
+  const chunks: string[][] = [];
+  for (let i = 0; i < tickers.length; i += chunkSize) chunks.push(tickers.slice(i, i + chunkSize));
+  for (const chunk of chunks) {
+    try {
+      let res = await fetchChunk(chunk, auth);
+      if (res.status === 401 || res.status === 403) {
+        yahooAuth = null;
+        try { auth = await getYahooAuth(); res = await fetchChunk(chunk, auth); } catch { continue; }
+      }
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const q of data?.quoteResponse?.result ?? []) {
+        if (q?.symbol) out.set(q.symbol, parseSpikeQuote(q));
+      }
+    } catch {
+      // 청크 실패 — 해당 청크 티커는 이번 주기 스냅샷 없음
+    }
+  }
+  return out;
 }
 
 export interface ChartData { meta: Record<string, any>; points: Point[]; }
@@ -256,6 +397,61 @@ export async function fetchNews(ticker: string): Promise<NewsItem[]> {
   }));
 }
 
+export interface StocktwitsMessage {
+  body: string;
+  username: string;
+  ts: number | null;       // created_at → unix sec
+  sentiment: "Bullish" | "Bearish" | null;
+}
+
+export interface StocktwitsSentiment {
+  messages: StocktwitsMessage[];
+  bullish_pct: number | null; // 태그된 메시지 한정; 태그 0건이면 null
+  tagged: number;
+  total: number;
+}
+
+/**
+ * StockTwits 공개 심벌 스트림에서 최신 메시지 + Bullish/Bearish 여론 집계.
+ * 404/빈 스트림은 null (정상 종목도 메시지가 없을 수 있음).
+ * 네트워크·파싱·그 외 HTTP 오류는 throw — getPosts 의 allSettled 로 레딧/뉴스와 격리됨.
+ */
+export async function fetchStocktwitsSentiment(ticker: string): Promise<StocktwitsSentiment | null> {
+  const res = await fetch(STOCKTWITS_URL(ticker), {
+    headers: { "User-Agent": BROWSER_UA },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`StockTwits 응답 ${res.status} (api.stocktwits.com)`);
+  const data = await res.json() as { messages?: any[] };
+  const raw = data.messages;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  let bullish = 0;
+  let tagged = 0;
+  const messages: StocktwitsMessage[] = raw.map((m) => {
+    const basic = m?.entities?.sentiment?.basic;
+    const sentiment: "Bullish" | "Bearish" | null =
+      basic === "Bullish" ? "Bullish" : basic === "Bearish" ? "Bearish" : null;
+    if (sentiment) {
+      tagged++;
+      if (sentiment === "Bullish") bullish++;
+    }
+    const ms = m?.created_at ? Date.parse(m.created_at) : NaN;
+    return {
+      body: m?.body ?? "",
+      username: m?.user?.username ?? "",
+      ts: Number.isFinite(ms) ? Math.floor(ms / 1000) : null,
+      sentiment,
+    };
+  });
+  return {
+    messages: messages.slice(0, 8),
+    bullish_pct: tagged > 0 ? round4((bullish / tagged) * 100) : null,
+    tagged,
+    total: raw.length,
+  };
+}
+
 export interface SymbolItem { ticker: string; name: string | null; exchange: string | null; }
 
 export async function searchSymbols(query: string): Promise<SymbolItem[]> {
@@ -267,4 +463,170 @@ export async function searchSymbols(query: string): Promise<SymbolItem[]> {
       name: q.shortname ?? q.longname ?? null,
       exchange: q.exchDisp ?? null,
     }));
+}
+
+// ── SEC EDGAR (공시·재무제표·현금흐름) ──
+// 공식 무료 US-gov API. 식별 가능한 User-Agent 가이드라인 준수 (정책상 필수).
+// EDGAR 장애는 다른 패널에 영향을 주지 않는다 — services.getFundamentals 에서 격리.
+const SEC_UA = "raddit research admin@example.com";
+const secGet = (url: string) => getJson(url, { headers: { "User-Agent": SEC_UA } });
+
+const TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
+const submissionsUrl = (cik10: string) => `https://data.sec.gov/submissions/CIK${cik10}.json`;
+const companyFactsUrl = (cik10: string) => `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik10}.json`;
+
+// company_tickers.json 캐시 — 모듈 수준, 6h TTL (티커→CIK 매핑은 거의 안 바뀜)
+let tickersCache: { at: number; map: Map<string, string> } | null = null;
+const TICKERS_TTL_MS = 6 * 3600_000;
+
+async function getTickerMap(): Promise<Map<string, string>> {
+  if (tickersCache && Date.now() - tickersCache.at < TICKERS_TTL_MS) return tickersCache.map;
+  const data = await secGet(TICKERS_URL);
+  const map = new Map<string, string>();
+  for (const k of Object.keys(data || {})) {
+    const row = data[k];
+    if (row && row.ticker && row.cik_str != null) {
+      map.set(String(row.ticker).toUpperCase(), String(row.cik_str).padStart(10, "0"));
+    }
+  }
+  tickersCache = { at: Date.now(), map };
+  return map;
+}
+
+/** 티커 → 10자리 CIK 문자열(0 채움). EDGAR 미등록(OTC/소형주)이면 null.
+ *  네트워크 오류는 throw (상위 getFundamentals 가 잡아 격리). */
+export async function tickerToCik(ticker: string): Promise<string | null> {
+  const map = await getTickerMap();
+  return map.get(ticker.toUpperCase()) ?? null;
+}
+
+export interface SecFiling {
+  form: string; date: string; docDesc: string | null; url: string;
+}
+export interface SecFinancials {
+  revenues_ttm: number | null;
+  net_income_ttm: number | null;
+  total_assets: number | null;
+  eps: number | null;
+  cash: number | null;            // 현금 + 단기투자
+  operating_cf_ttm: number | null;
+  as_of: string | null;           // 가장 최근 fact 기준일 (YYYY-MM-DD)
+}
+export interface Fundamentals {
+  cik: string | null;
+  filings: SecFiling[];           // 관련 form(8-K/10-Q/10-K/S-1/SC13) 최근 8건
+  financials: SecFinancials | null;
+}
+
+// 레딧 워치보드 관심 공시 — 내부자 거래(Form 4) 등 노이즈 제거
+const RELEVANT_FORMS = ["8-K", "10-K", "10-Q", "S-1", "SC 13D", "SC 13G"];
+const isRelevantForm = (form: string) =>
+  RELEVANT_FORMS.some(b => form === b || form.startsWith(b + "/"));
+
+/** us-gaap fact 에서 최근값 추출. preferAnnual=true 면 FY(연간) 우선(TTM 근사),
+ *  FY 가 없으면 최근 end 기준. 값/단위가 없으면 null. */
+function latestFact(
+  cf: any, tag: string, unit: string, preferAnnual = false,
+): { end: string; val: number } | null {
+  const arr = cf?.facts?.["us-gaap"]?.[tag]?.units?.[unit];
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  const num = arr.filter((f: any) => typeof f?.val === "number");
+  if (num.length === 0) return null;
+  const byEndDesc = (a: any, b: any) =>
+    a.end < b.end ? 1 : a.end > b.end ? -1 : (b.start ?? "").localeCompare(a.start ?? "");
+  if (preferAnnual) {
+    const fy = num.filter((f: any) => f.fp === "FY").sort(byEndDesc);
+    if (fy.length) return { end: fy[0].end, val: fy[0].val };
+  }
+  const top = num.slice().sort(byEndDesc)[0];
+  return { end: top.end, val: top.val };
+}
+
+/** 여러 후보 태그 중 가장 최근 end 의 fact 선택 — 'Revenues' 가 과거에만
+ *  보고된 발행사(Apple 등)에서 fallback 태그의 최신값이 이기게 한다. */
+function latestAmong(
+  cf: any, tags: string[], unit: string, preferAnnual = false,
+): { end: string; val: number } | null {
+  let best: { end: string; val: number } | null = null;
+  for (const tag of tags) {
+    const f = latestFact(cf, tag, unit, preferAnnual);
+    if (f && (!best || f.end > best.end)) best = f;
+  }
+  return best;
+}
+
+/**
+ * SEC EDGAR 펀더멘털 조회 — 최근 관련 공시 + 재무 하이라이트(XBRL).
+ * CIK 미등록(OTC/소형주)이면 {cik:null,...} 반환. 네트워크 오류는 throw.
+ * submissions/companyfacts 각각 독립 try/catch — 한쪽 실패해도 다른쪽은 채운다.
+ */
+export async function fetchFundamentals(ticker: string): Promise<Fundamentals | null> {
+  const cik = await tickerToCik(ticker);
+  if (!cik) return { cik: null, filings: [], financials: null };
+
+  // 1) 공시 — submissions.filings.recent 에서 관련 form 최근 8건
+  let filings: SecFiling[] = [];
+  try {
+    const sub = await secGet(submissionsUrl(cik));
+    const r = sub?.filings?.recent;
+    if (r && Array.isArray(r.form)) {
+      const cikInt = String(parseInt(cik, 10));
+      const forms: any[] = r.form;
+      const acc: any[] = r.accessionNumber ?? [];
+      const dates: any[] = r.filingDate ?? [];
+      const pdocs: any[] = r.primaryDocument ?? [];
+      const pdesc: any[] = r.primaryDocDescription ?? [];
+      for (let i = 0; i < forms.length && filings.length < 8; i++) {
+        const form = String(forms[i] ?? "");
+        if (!isRelevantForm(form)) continue;
+        const accession = acc[i];
+        const pdoc = pdocs[i];
+        if (!accession || !pdoc) continue;
+        filings.push({
+          form,
+          date: dates[i] ? String(dates[i]) : "",
+          docDesc: pdesc[i] ? String(pdesc[i]) : null,
+          url: `https://www.sec.gov/Archives/edgar/data/${cikInt}/${String(accession).replace(/-/g, "")}/${pdoc}`,
+        });
+      }
+    }
+  } catch {
+    // submissions 실패 — 공시 빈 목록. 재무는 계속 시도.
+  }
+
+  // 2) 재무 — companyfacts XBRL 최근값 (us-gaap)
+  let financials: SecFinancials | null = null;
+  try {
+    const cf = await secGet(companyFactsUrl(cik));
+    // 매출/순이익: 동일 의미의 여러 us-gaap 태그 중 가장 최근 end 채택.
+    //   'Revenues' 는 Apple 등에서 과거에만 보고 — fallback 태그의 최신값이 우선.
+    const rev = latestAmong(cf,
+      ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"], "USD", true);
+    const ni = latestAmong(cf,
+      ["NetIncomeLoss", "ProfitLoss"], "USD", true);
+    const assets = latestFact(cf, "Assets", "USD", false);
+    const eps = latestFact(cf, "EarningsPerShareBasic", "USD/shares", true);
+    const cashF = latestFact(cf, "CashAndCashEquivalentsAtCarryingValue", "USD", false);
+    const stiF = latestFact(cf, "ShortTermInvestments", "USD", false);
+    const ocf = latestFact(cf, "NetCashProvidedByUsedInOperatingActivities", "USD", true);
+
+    if (rev || ni || assets || eps || cashF || ocf) {
+      const cashVal = (cashF?.val ?? 0) + (stiF?.val ?? 0);
+      const ends = [rev, ni, assets, eps, cashF, stiF, ocf]
+        .map(f => f?.end ?? "").filter(Boolean).sort();
+      financials = {
+        revenues_ttm: rev?.val ?? null,
+        net_income_ttm: ni?.val ?? null,
+        total_assets: assets?.val ?? null,
+        eps: eps?.val ?? null,
+        cash: (cashF?.val != null || stiF?.val != null) ? cashVal : null,
+        operating_cf_ttm: ocf?.val ?? null,
+        as_of: ends.length ? ends[ends.length - 1] : null,
+      };
+    }
+  } catch {
+    // companyfacts 실패 — 재무 null
+  }
+
+  return { cik, filings, financials };
 }
