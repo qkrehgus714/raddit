@@ -71,7 +71,7 @@ export interface MentionItem {
   quote?: Quote | null;
   buy_ratio_pct?: number | null;
   bidAskTotal?: number | null;
-  sector?: string | null;
+  themes?: string[];
 }
 
 export async function fetchMentions(filter: string): Promise<MentionItem[]> {
@@ -229,57 +229,29 @@ export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, co
   await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
-// ── 섹터 정보 (#81) ──
-// v7/quote와 달리 quoteSummary는 티커당 1건씩만 조회 가능(배치 불가). 레이트리밋
-// 위험을 동시성 제한 + 장기(24h) 캐시로 방어한다 — 섹터는 거의 안 바뀌므로 반복
-// 노출되는 인기 종목은 사실상 최초 1회만 실제 호출된다.
-const SUMMARY_PROFILE_URL = (ticker: string) =>
-  `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=summaryProfile`;
-const SECTOR_TTL_MS = 24 * 3600_000;
-const sectorCache = new Map<string, { sector: string | null; at: number }>();
-
-async function fetchSectorOne(ticker: string, auth: { cookie: string; crumb: string }): Promise<string | null> {
-  try {
-    const url = `${SUMMARY_PROFILE_URL(ticker)}&crumb=${encodeURIComponent(auth.crumb)}`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": BROWSER_UA, Cookie: auth.cookie },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.quoteSummary?.result?.[0]?.summaryProfile?.sector ?? null;
-  } catch {
-    return null;
+// ── 테마 태그 (#85) ──
+// GICS 섹터(#81)는 "AI"처럼 여러 산업에 걸친 테마를 표현할 수 없어, 큐레이션된
+// 티커→테마 매핑으로 대체한다. 네트워크 호출이 없어 즉시 태깅되며, 한 티커가
+// 여러 테마에 속할 수 있다. 신규/편입 종목은 목록을 사람이 직접 갱신해야 한다.
+const THEME_TICKERS: Record<string, string[]> = {
+  "반도체": ["NVDA","AMD","INTC","TSM","AVGO","QCOM","MU","TXN","ARM","ASML","AMAT","LRCX","KLAC","MRVL","ON","NXPI","STM","SMCI","WOLF"],
+  "AI": ["NVDA","MSFT","GOOGL","GOOG","META","AMZN","PLTR","AI","SMCI","AVGO","AMD","ORCL","CRM","IBM","SNOW","NOW","ARM"],
+  "우주": ["RKLB","LUNR","ASTS","SPCE","RDW","ASTR","LMT","BA","NOC","RTX","MAXR","IRDM","VSAT","GSAT"],
+};
+const TICKER_THEMES = new Map<string, string[]>();
+for (const [theme, tickers] of Object.entries(THEME_TICKERS)) {
+  for (const ticker of tickers) {
+    const arr = TICKER_THEMES.get(ticker);
+    if (arr) arr.push(theme);
+    else TICKER_THEMES.set(ticker, [theme]);
   }
 }
 
-/** items에 섹터를 채운다. 캐시 적중 항목은 요청 없이 즉시 채워지고, 미적중 항목만 동시성 제한 하에 조회. */
-export async function attachSectorsBatch(items: MentionItem[], concurrency = 8): Promise<void> {
-  if (!items.length) return;
-  const now = Date.now();
-  const need: MentionItem[] = [];
+/** items에 테마 태그를 채운다. 매핑에 없는 티커는 빈 배열. */
+export function attachThemes(items: MentionItem[]): void {
   for (const it of items) {
-    const cached = sectorCache.get(it.ticker);
-    if (cached && now - cached.at < SECTOR_TTL_MS) it.sector = cached.sector;
-    else need.push(it);
+    it.themes = TICKER_THEMES.get(it.ticker.toUpperCase()) ?? [];
   }
-  if (!need.length) return;
-  let auth: { cookie: string; crumb: string };
-  try {
-    auth = await getYahooAuth();
-  } catch {
-    return;
-  }
-  let next = 0;
-  const worker = async () => {
-    while (next < need.length) {
-      const it = need[next++];
-      const sector = await fetchSectorOne(it.ticker, auth);
-      sectorCache.set(it.ticker, { sector, at: Date.now() });
-      it.sector = sector;
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, need.length) }, worker));
 }
 
 // ── 급등 탐지용 배치 시세 (#74) ──
