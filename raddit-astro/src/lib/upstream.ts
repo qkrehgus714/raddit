@@ -229,14 +229,38 @@ export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, co
   await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
-// ── 테마 태그 (#85) ──
+// ── 테마 태그 (#85, #87, #89) ──
 // GICS 섹터(#81)는 "AI"처럼 여러 산업에 걸친 테마를 표현할 수 없어, 큐레이션된
 // 티커→테마 매핑으로 대체한다. 네트워크 호출이 없어 즉시 태깅되며, 한 티커가
 // 여러 테마에 속할 수 있다. 신규/편입 종목은 목록을 사람이 직접 갱신해야 한다.
 const THEME_TICKERS: Record<string, string[]> = {
-  "반도체": ["NVDA","AMD","INTC","TSM","AVGO","QCOM","MU","TXN","ARM","ASML","AMAT","LRCX","KLAC","MRVL","ON","NXPI","STM","SMCI","WOLF"],
-  "AI": ["NVDA","MSFT","GOOGL","GOOG","META","AMZN","PLTR","AI","SMCI","AVGO","AMD","ORCL","CRM","IBM","SNOW","NOW","ARM"],
-  "우주": ["RKLB","LUNR","ASTS","SPCE","RDW","ASTR","LMT","BA","NOC","RTX","MAXR","IRDM","VSAT","GSAT"],
+  "반도체": ["NVDA","AMD","INTC","TSM","AVGO","QCOM","MU","TXN","ARM","ASML","AMAT","LRCX","KLAC","MRVL","ON","NXPI","STM","SMCI","WOLF",
+    "AAOI","AMKR","MRAM","SNDK","SNPS","TER","SOXL","SOXS","SOXX","SMH"],
+  "AI": ["NVDA","MSFT","GOOGL","GOOG","META","AMZN","PLTR","AI","SMCI","AVGO","AMD","ORCL","CRM","IBM","SNOW","NOW","ARM",
+    "CRWV","NBIS","IREN","APLD","DELL"],
+  "우주": ["RKLB","LUNR","ASTS","SPCE","RDW","ASTR","LMT","BA","NOC","RTX","MAXR","IRDM","VSAT","GSAT",
+    "SPCX","PL"],
+  "바이오/제약": ["JNJ","LLY","PFE","RMD","ISRG","COO","SLS","DRTS"],
+  "에너지/자원": ["AM","AR","BE","CVX","DTE","ES","ET","EU","FCEL","GLP","HP","HBM","AGI","OR","MP","NEE","NEXT","OXY",
+    "PUMP","SMR","SO","GLD","SLV","TE","UUUU","USO","XOM","XLE","TAN","OKLO","BWXT","DC","GEV","BATL"],
+  "전기차/배터리": ["TSLA","RIVN","GM","QS","VC","LOT"],
+  "대마초": ["TLRY","CGC","ACB","SNDL","CRON","GRWG","CURLF","TCNNF","GTBIF"],
+  "금융": ["HOOD","FCF","IBKR","MS","GS","MA","PYPL","TRV","ALL","GL","CIA","SOFI","MC","HSBC","BULL"],
+  "암호화폐": ["MSTR","MARA","ANY"],
+  "사이버보안": ["CRWD","PANW","NET","BB"],
+  "양자컴퓨팅": ["RGTI","IONQ"],
+  "로봇/드론": ["RR","ONDS","RCAT","AVAV"],
+  "미디어/엔터": ["NFLX","RDDT","DJT","AMC","SNAP","NYT","IMAX","OUT"],
+  "소비재/유통": ["WEN","KO","WMT","PG","GME","GO","DPZ","COST","YUM","CASY","MO","AS"],
+  "모빌리티/여행": ["UBER","CVNA","GRAB","AAL","UP","BC"],
+  "부동산": ["SMA","HR","OPEN","FOR"],
+  "헬스케어서비스": ["UNH","WAY","NRC"],
+  "기술/소프트웨어": ["ADBE","SAP","AAPL","UI","NOK","TDS","API","LINK","STX","WDC","YOU","IT","AZ"],
+  "산업재/소재": ["CAT","GE","CC","DOW","IP","OI","SLND"],
+  "중국기업": ["WB","IQ","BABA","JD","LOT"],
+  "지수/섹터 ETF": ["SPY","QQQ","QQQM","VOO","VTI","VT","VXUS","IWM","TQQQ","SCHD","AVUV","XLK","VGT","WANT","JUST","DON"],
+  "채권/현금성 ETF": ["BND","SGOV","IG"],
+  "국가 ETF": ["KORU","EWY","YINN"],
 };
 const TICKER_THEMES = new Map<string, string[]>();
 for (const [theme, tickers] of Object.entries(THEME_TICKERS)) {
