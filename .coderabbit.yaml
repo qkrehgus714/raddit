@@ -1,0 +1,112 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+# raddit CodeRabbit 설정
+# 이슈 #97: 한국어 assertive 프로필, dev 대상 PR 자동 리뷰, 모노레포 맞춤 지침
+
+language: ko-KR
+
+reviews:
+  profile: assertive
+
+  # 자동 리뷰 설정
+  # - CodeRabbit은 기본 브랜치(main)를 항상 포함한다.
+  #   base_branches는 기본 브랜치에 더해 검토할 브랜치(additive).
+  #   따라서 base_branches: [dev] → main + dev 모두 검토.
+  # - Draft PR 제외(drafts: false = 기본값이지만 정책 명시)
+  # - 새 푸시마다 증분 리뷰(auto_incremental_review: true = 기본값이지만 정책 명시)
+  # - 5회 리뷰 후 자동 일시정지(=기본값이지만 정책 명시)
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
+    base_branches:
+      - dev
+
+  # 리뷰 제외 경로 (생성물·의존성·빌드 결과물)
+  # path_filters는 git sparse-checkout에도 적용되므로 리뷰 비용이 줄어듦
+  path_filters:
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!**/.astro/**"
+    - "!**/node_modules/**"
+    - "!**/__pycache__/**"
+    - "!**/*.lock"
+    - "!**/*.lockb"
+    - "!**/package-lock.json"
+
+  # 모노레포 경로별 검토 지침
+  path_instructions:
+    # Astro/SolidJS 프론트엔드
+    - path: "raddit-astro/**/*.{ts,tsx,astro}"
+      instructions: |
+        Astro + SolidJS 프론트엔드입니다.
+        - SolidJS signal/createMemo/createEffect는 반드시 함수 컴포넌트 본문에서 호출.
+        - 신호 갱신은 `setX(value)`만 사용. 이벤트 핸들러에서 상태 동기화 누락을 집중 확인.
+        - `createEffect`는 구독 신호가 변경될 때만 재실행됨. 무한 루프·불필요한 재구독을 잡을 것.
+        - onMount/onCleanup은 짝으로 사용. 익명 리스너는 메모리 누수 원인 → onCleanup에서 제거했는지 확인.
+        - fetch에는 AbortSignal.timeout(또는 AbortController) 권장.
+        - 이스케이프 함수(esc 등)는 HTML 컨텍스트에 충분한지(따옴표·작은따옴표 포함) 확인.
+        - 클라이언트 번들 크기를 우선. 새 런타임 의존성은 gzip 크기 언급 필수.
+    # Astro API 라우트
+    - path: "raddit-astro/src/pages/api/**/*.ts"
+      instructions: |
+        Astro APIRoute 핸들러입니다. Next.js가 아님.
+        - `Request`/`Response` Web API만 사용. `NextRequest`/`NextResponse` 금지.
+        - 업스트림 fetch는 캐시(TtlCache)와 조인되어야 함.
+        - 응답 Content-Type과 상태 코드를 명시.
+        - 환경변수는 `import.meta.env.*` 사용. `process.env`는 서버 측에서만.
+        - 쿼리/바디 검증을 빠뜨리면 안 됨. 음수/빈 값 처리를 집중 점검.
+    # 공용 lib (캐시, 업스트림, 지표)
+    - path: "raddit-astro/src/lib/**/*.ts"
+      instructions: |
+        프론트와 API 라우트 양쪽에서 쓰이는 공용 로직.
+        - TtlCache의 SWR + coalescing + stale-if-error 동작이 깨지지 않았는지 확인.
+        - 업스트림 fetch(야후/레딧/GitHub)에는 타임아웃과 에러 핸들링 필수.
+        - TypeScript strict 모드 호환. `any`는 피하고 명시적 타입 사용.
+    # Python 수집기
+    - path: "raddit-reddit/**/*.py"
+      instructions: |
+        FastAPI + stdlib urllib 기반 Reddit 수집기입니다. (이슈 #13)
+        - 업스트림 HTTP는 httpx/requests 금지 — stdlib urllib만 허용 (Reddit TLS 지문 차단 회피). httpx/requests 기반 코드를 제안하지 말 것.
+        - urllib 요청에는 timeout과 지수 백오프 재시도(_MAX_RETRIES, _RETRY_BASE)가 명시돼 있는지 확인.
+        - 동시·연속 요청은 _req_lock + _MIN_INTERVAL로 직렬화돼야 함. asyncio.gather 등 비동기 동시 요청 패턴은 사용처가 없으니 권장하지 말 것.
+        - 업스트림 응답(RSS XML) 스키마 변경에 대한 방어 코드 점검.
+        - 시크릿은 환경변수(RPC_KEY 등)에서만. 하드코딩 금지.
+    # GitHub Actions 워크플로우
+    - path: ".github/workflows/**/*.yml"
+      instructions: |
+        Railway 배포 워크플로우입니다.
+        - `permissions:` 블록을 최소 권한으로 명시.
+        - 시크릿은 `${{ secrets.* }}`만 사용. 하드코딩 토큰 금지.
+        - main→production, dev→dev 매핑이 정확한지 확인.
+        - detect-changes 잡이 올바른 디렉토리 매칭을 사용하는지 점검.
+    # 테스트 코드
+    - path: "**/*.{test,spec}.{ts,tsx,py}"
+      instructions: |
+        테스트입니다.
+        - 실제 동작을 검증하는 assertion이 있는지 확인.
+        - mock은 최소화하고, 업스트림 의존성은 명시적 경계에서만 stub.
+        - happy path와 에러 경로를 모두 커버했는지 점검.
+
+  # PR 설명 평가에서 연결된 이슈 일관성 검증 (=기본값 true, 정책 명시)
+  assess_linked_issues: true
+
+  # 변경된 파일 요약은 켬 (빠른 개요, =기본값 true, 정책 명시)
+  changed_files_summary: true
+
+# CodeRabbit 채팅: @멘션 없이 코멘트 스레드에 자동 응답 (언어는 최상위 language: ko-KR을 따름)
+chat:
+  auto_reply: true
+
+# 코드 지침을 CONTRIBUTING.md에서 학습
+# - CONTRIBUTING.md는 스키마 기본 패턴에 없으므로 명시 필수.
+# - AGENTS.md는 스키마 기본 패턴에 포함되지만, applyTo 제어를 위해 재명시.
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - files: "CONTRIBUTING.md"
+        applyTo: "**"
+      - files: "AGENTS.md"
+        applyTo: "**"
