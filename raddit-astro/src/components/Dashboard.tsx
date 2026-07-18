@@ -153,12 +153,17 @@ export default function Dashboard() {
     const seq = ++hypeSeq;
     if (hypeAbort) hypeAbort.abort();
     hypeAbort = new AbortController();
+    // 재로딩 시작 시 이전 결과·오류 초기화 — 첫 요청 중 빈 UI 노출 억제
+    setHypeRows([]);
+    setHypeErr("");
     setHypeLoading(true);
     try {
       const market = marketVal();
+      // hypeAbort.signal(뷰 이탈·중복 요청 취소) + 15s 타임아웃을 동시 적용
+      const signal = AbortSignal.any([hypeAbort.signal, AbortSignal.timeout(15000)]);
       const res = await fetch(
         `/api/hype?market=${market}&filter=${encodeURIComponent(filterVal())}`,
-        { signal: AbortSignal.timeout(15000) },
+        { signal },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
