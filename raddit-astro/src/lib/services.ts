@@ -260,11 +260,17 @@ const shortCache = new TtlCache<ShortPayload>(12 * 3600_000, 3600_000);
 let finraCache: { at: number; data: up.FinraShortVolume | null } | null = null;
 let finraInflight: Promise<up.FinraShortVolume | null> | null = null;
 const FINRA_TTL_OK_MS = 24 * 3600_000;
+const FINRA_TTL_STALE_MS = 3600_000;
 const FINRA_TTL_ERR_MS = 60_000;
 
+/** 캐시 유효기간 — 최신 후보 파일이면 24h, 옛 파일이면(당일분 게시 전 로드) 1h 뒤 재확인. */
+function finraTtlMs(): number {
+  if (!finraCache?.data) return FINRA_TTL_ERR_MS;
+  return finraCache.data.date === up.finraDateCandidates()[0] ? FINRA_TTL_OK_MS : FINRA_TTL_STALE_MS;
+}
+
 export async function getFinraShortMap(): Promise<up.FinraShortVolume | null> {
-  const ttl = finraCache?.data ? FINRA_TTL_OK_MS : FINRA_TTL_ERR_MS;
-  if (finraCache && Date.now() - finraCache.at < ttl) return finraCache.data;
+  if (finraCache && Date.now() - finraCache.at < finraTtlMs()) return finraCache.data;
   if (!finraInflight) {
     finraInflight = up.fetchFinraShortVolume()
       .catch(() => null) // 장애도 null — 호출부는 결손 처리, 60초 뒤 재시도

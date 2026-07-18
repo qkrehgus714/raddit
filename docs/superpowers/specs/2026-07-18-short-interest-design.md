@@ -52,7 +52,8 @@ interface ShortInterest {
 `CNMSshvol{YYYYMMDD}.txt` 다운로드·파싱. 형식은 파이프 구분:
 `Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market`.
 
-- ET 기준 전일부터 **최대 5영업일 거슬러** 시도 — 주말·휴일엔 파일이 없어 404.
+- ET 기준 당일부터 **최대 5영업일 거슬러** 시도 — 당일분은 저녁(~18시 ET) 게시라
+  아직 없으면 404로 자연히 전일로 소급. 주말·휴일도 404로 건너뜀.
   날짜 후보 생성은 순수 함수 `finraDateCandidates(now)`로 분리(테스트 대상).
 - 파싱도 순수 함수 `parseFinraShortVolume(text)`로 분리(테스트 대상).
 - 반환: `{ date: "YYYYMMDD", map: Map<ticker, { short_vol_pct: number; total_volume: number }> }`

@@ -351,18 +351,17 @@ const FINRA_SHVOL_URL = (yyyymmdd: string) =>
   `https://cdn.finra.org/equity/regsho/daily/CNMSshvol${yyyymmdd}.txt`;
 
 /**
- * 시도할 파일 날짜 후보 — ET 기준 전일부터 주말을 건너뛰며 최대 max개 (YYYYMMDD).
- * 파일은 장 마감 후 저녁 게시라 당일분은 없다고 가정. 휴일 404는 호출부가 다음 후보로.
+ * 시도할 파일 날짜 후보 — ET 기준 당일부터 주말을 건너뛰며 최대 max개 (YYYYMMDD).
+ * 당일 파일은 장 마감 후 저녁(~18시 ET) 게시 — 아직 없으면 404로 자연히 전일로 소급.
  */
 export function finraDateCandidates(now: Date = new Date(), max = 5): string[] {
   const etToday = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(now);
   const d = new Date(`${etToday}T00:00:00Z`);
   const out: string[] = [];
   while (out.length < max) {
-    d.setUTCDate(d.getUTCDate() - 1);
     const dow = d.getUTCDay();
-    if (dow === 0 || dow === 6) continue;
-    out.push(d.toISOString().slice(0, 10).replace(/-/g, ""));
+    if (dow !== 0 && dow !== 6) out.push(d.toISOString().slice(0, 10).replace(/-/g, ""));
+    d.setUTCDate(d.getUTCDate() - 1);
   }
   return out;
 }
