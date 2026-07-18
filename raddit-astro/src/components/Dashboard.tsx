@@ -97,6 +97,7 @@ export default function Dashboard() {
     price: number; change_pct: number; vol_ratio: number | null;
     market_state: string; news: "none" | "recent" | "unknown";
     news_title: string | null; news_url: string | null;
+    short_vol_pct: number | null;
     last_price: number | null; since_pct: number | null;
   }
   const [alertRows, setAlertRows] = createSignal<AlertRow[]>([]);
@@ -1045,11 +1046,11 @@ export default function Dashboard() {
             <table>
               <thead><tr>
                 <th>감지 시각</th><th class="left">종목</th><th>세션</th><th>상승률</th>
-                <th>거래량</th><th class="left">뉴스</th><th>감지가</th><th>이후 등락</th>
+                <th>거래량</th><th>숏 비중</th><th class="left">뉴스</th><th>감지가</th><th>이후 등락</th>
               </tr></thead>
               <tbody>
                 <Show when={alertRows().length} fallback={
-                  <tr><td class="empty" colspan="8">
+                  <tr><td class="empty" colspan="9">
                     {alertsErr() || (alertsOpen() === false
                       ? "미국 장 외 시간입니다 (감시: 평일 ET 4:00~20:00)"
                       : "아직 감지된 급등이 없습니다")}
@@ -1066,6 +1067,11 @@ export default function Dashboard() {
                       <td><span class="pill flat">{a.market_state === "PRE" ? "프리" : a.market_state === "REGULAR" ? "정규" : "애프터"}</span></td>
                       <td><span class="pill up">+{a.change_pct.toFixed(1)}%</span></td>
                       <td class="dim">{a.vol_ratio != null ? `×${a.vol_ratio.toFixed(1)}` : "-"}</td>
+                      <td>{a.short_vol_pct != null
+                        ? (a.short_vol_pct >= 40
+                          ? <span class="pill down">{a.short_vol_pct.toFixed(0)}%</span>
+                          : <span class="dim">{a.short_vol_pct.toFixed(0)}%</span>)
+                        : <span class="dim">-</span>}</td>
                       <td class="left">
                         {a.news === "none"
                           ? <span class="news-badge lead">뉴스 없음 · 선행 가능성</span>
