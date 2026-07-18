@@ -5,12 +5,13 @@ import { parseShortInterest, finraDateCandidates, parseFinraShortVolume } from "
 const yahooRes = (ks: any) => ({ quoteSummary: { result: [{ defaultKeyStatistics: ks }] } });
 
 describe("parseShortInterest", () => {
-  it("정상 응답 — 모든 필드 추출, shortPercentOfFloat 는 % 환산", () => {
+  it("정상 응답 — 모든 필드 추출, 비율 필드는 % 환산", () => {
     const si = parseShortInterest(yahooRes({
       sharesShort: { raw: 1_000_000 },
       sharesShortPriorMonth: { raw: 800_000 },
       shortRatio: { raw: 3.21 },
       shortPercentOfFloat: { raw: 0.1034 },
+      sharesPercentSharesOut: { raw: 0.0452 },
       dateShortInterest: { raw: 1_751_241_600 },
     }));
     expect(si).toEqual({
@@ -18,14 +19,16 @@ describe("parseShortInterest", () => {
       shares_short_prior: 800_000,
       short_ratio: 3.21,
       short_pct_float: 10.34,
+      short_pct_out: 4.52,
       date_short_interest: 1_751_241_600,
     });
   });
 
-  it("결손 필드는 null (페니주식 — shortPercentOfFloat 없음)", () => {
+  it("결손 필드는 null (페니주식 — 비율 필드 없음)", () => {
     const si = parseShortInterest(yahooRes({ sharesShort: { raw: 5000 } }));
     expect(si.shares_short).toBe(5000);
     expect(si.short_pct_float).toBeNull();
+    expect(si.short_pct_out).toBeNull();
     expect(si.short_ratio).toBeNull();
     expect(si.shares_short_prior).toBeNull();
     expect(si.date_short_interest).toBeNull();
@@ -36,7 +39,7 @@ describe("parseShortInterest", () => {
       const si = parseShortInterest(raw);
       expect(si).toEqual({
         shares_short: null, shares_short_prior: null, short_ratio: null,
-        short_pct_float: null, date_short_interest: null,
+        short_pct_float: null, short_pct_out: null, date_short_interest: null,
       });
     }
   });

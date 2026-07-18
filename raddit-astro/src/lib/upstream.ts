@@ -334,18 +334,21 @@ export interface ShortInterest {
   shares_short_prior: number | null;  // sharesShortPriorMonth.raw (전월)
   short_ratio: number | null;         // shortRatio.raw (days to cover)
   short_pct_float: number | null;     // shortPercentOfFloat.raw × 100 (%)
+  short_pct_out: number | null;       // sharesPercentSharesOut.raw × 100 (%) — float 왜곡 보정용 (#89)
   date_short_interest: number | null; // dateShortInterest.raw (epoch sec, 보고 기준일)
 }
 
 /** v10 quoteSummary 응답 → 공매도 필드만. 모든 필드 결손 허용(null). */
 export function parseShortInterest(raw: any): ShortInterest {
   const ks = raw?.quoteSummary?.result?.[0]?.defaultKeyStatistics ?? {};
-  const pct = ks.shortPercentOfFloat?.raw;
+  const pctFloat = ks.shortPercentOfFloat?.raw;
+  const pctOut = ks.sharesPercentSharesOut?.raw;
   return {
     shares_short: ks.sharesShort?.raw ?? null,
     shares_short_prior: ks.sharesShortPriorMonth?.raw ?? null,
     short_ratio: ks.shortRatio?.raw ?? null,
-    short_pct_float: pct != null ? round4(pct * 100) : null,
+    short_pct_float: pctFloat != null ? round4(pctFloat * 100) : null,
+    short_pct_out: pctOut != null ? round4(pctOut * 100) : null,
     date_short_interest: ks.dateShortInterest?.raw ?? null,
   };
 }
