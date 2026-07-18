@@ -298,6 +298,53 @@ export async function fetchSpikeQuotes(
   return out;
 }
 
+// ── 공매도 잔고 (#76) — Yahoo v10 quoteSummary, FINRA 격주 보고 기반(~2주 지연) ──
+
+const YAHOO_QUOTESUMMARY_URL = (ticker: string) =>
+  `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics`;
+
+export interface ShortInterest {
+  shares_short: number | null;        // sharesShort.raw
+  shares_short_prior: number | null;  // sharesShortPriorMonth.raw (전월)
+  short_ratio: number | null;         // shortRatio.raw (days to cover)
+  short_pct_float: number | null;     // shortPercentOfFloat.raw × 100 (%)
+  date_short_interest: number | null; // dateShortInterest.raw (epoch sec, 보고 기준일)
+}
+
+/** v10 quoteSummary 응답 → 공매도 필드만. 모든 필드 결손 허용(null). */
+export function parseShortInterest(raw: any): ShortInterest {
+  const ks = raw?.quoteSummary?.result?.[0]?.defaultKeyStatistics ?? {};
+  const pct = ks.shortPercentOfFloat?.raw;
+  return {
+    shares_short: ks.sharesShort?.raw ?? null,
+    shares_short_prior: ks.sharesShortPriorMonth?.raw ?? null,
+    short_ratio: ks.shortRatio?.raw ?? null,
+    short_pct_float: pct != null ? round4(pct * 100) : null,
+    date_short_interest: ks.dateShortInterest?.raw ?? null,
+  };
+}
+
+/**
+ * 공매도 잔고 조회 (crumb 인증 — fetchBidAsk 패턴). 401/403 시 재발급 후 1회 재시도.
+ * fetchBidAsk와 달리 실패 시 throw — getShortData 의 allSettled 가 error 로 격리한다.
+ */
+export async function fetchShortInterest(ticker: string, retry = true): Promise<ShortInterest> {
+  const { cookie, crumb } = await getYahooAuth();
+  const url = `${YAHOO_QUOTESUMMARY_URL(ticker)}&crumb=${encodeURIComponent(crumb)}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": BROWSER_UA, Cookie: cookie },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    if (retry && (res.status === 401 || res.status === 403)) {
+      yahooAuth = null;
+      return fetchShortInterest(ticker, false);
+    }
+    throw new Error(`Yahoo quoteSummary 응답 ${res.status}`);
+  }
+  return parseShortInterest(await res.json());
+}
+
 export interface ChartData { meta: Record<string, any>; points: Point[]; }
 
 function round4(v: number): number { return Math.round(v * 1e4) / 1e4; }
