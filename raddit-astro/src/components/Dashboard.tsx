@@ -13,6 +13,13 @@ const FILTER_NAMES: Record<string, string> = {
   "pennystocks": "r/pennystocks", "stocks": "r/stocks",
   "investing": "r/investing", "shortsqueeze": "r/Shortsqueeze",
 };
+// 크립토 시장 (#93) — ApeWisdom 크립토 서브레딧 필터
+const CRYPTO_FILTER_NAMES: Record<string, string> = {
+  "all-crypto": "전체 크립토 서브레딧", "CryptoCurrency": "r/CryptoCurrency",
+  "Bitcoin": "r/Bitcoin", "CryptoMoonShots": "r/CryptoMoonShots",
+  "ethtrader": "r/ethtrader",
+};
+const isCryptoTicker = (ticker: string) => /-USD$/.test(ticker);
 const RANGES: [string, string][] = [["min","5분"],["day","일"],["week","주"],["month","월"],["year","년"]];
 const CANDLE_LABEL: Record<string, string> = { min:"5분봉", day:"일봉", week:"주봉", month:"월봉", year:"연봉" };
 
@@ -74,6 +81,7 @@ export default function Dashboard() {
   const [rows, setRows] = createSignal<Row[]>([]);
   const [sortKey, setSortKey] = createSignal("mentions");
   const [sortDir, setSortDir] = createSignal(-1);
+  const [marketVal, setMarketVal] = createSignal<"stocks" | "crypto">("stocks"); // 시장 토글 (#93)
   const [filterVal, setFilterVal] = createSignal("all-stocks");
   const [priceVal, setPriceVal] = createSignal("5");
   const [themeVal, setThemeVal] = createSignal("all"); // 테마 필터 (#85) — "all"이면 필터 없음
@@ -251,12 +259,14 @@ export default function Dashboard() {
     setStatus("수집 중… (주가 조회에 수십 초 걸릴 수 있음)");
     setStatusError(false);
     try {
-      const res = await fetch(`/api/data?filter=${encodeURIComponent(filterVal())}&max_price=${priceVal()}`);
+      const market = marketVal();
+      const maxPrice = market === "crypto" ? 0 : priceVal();
+      const res = await fetch(`/api/data?market=${market}&filter=${encodeURIComponent(filterVal())}&max_price=${maxPrice}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.status);
       const filtered = data.items.filter((d: Row) =>
-        // FALSE_POSITIVE(일반 단어·약어 충돌)는 제외하되, 실제 $5 미만 주식으로 확인된 티커는 보존
-        !FALSE_POSITIVE.has(d.ticker) || (d.quote && d.quote.price != null && d.quote.price < (Number(priceVal()) || 5))
+        // FALSE_POSITIVE(일반 단어·약어 충돌)는 주식 전용 — 크립토는 그대로 통과
+        market === "crypto" || !FALSE_POSITIVE.has(d.ticker) || (d.quote && d.quote.price != null && d.quote.price < (Number(priceVal()) || 5))
       ).map((d: Row) => ({
         ...d,
         price: d.quote ? d.quote.price : null,
@@ -277,6 +287,14 @@ export default function Dashboard() {
     }
   }
 
+  // 시장 토글 (#93) — 같은 버튼으로 주식 ⇄ 크립토 전환, 서브레딧 필터도 시장 기본값으로 리셋
+  function toggleMarket() {
+    const next = marketVal() === "stocks" ? "crypto" : "stocks";
+    setMarketVal(next);
+    setFilterVal(next === "crypto" ? "all-crypto" : "all-stocks");
+    load();
+  }
+
   // ── 정렬 ──
   function toggleSort(key: string) {
     if (sortKey() === key) setSortDir(-sortDir());
@@ -292,10 +310,15 @@ export default function Dashboard() {
 
   const filteredRows = createMemo(() => {
     const r = rows();
-    return themeVal() === "all" ? r : r.filter((x: Row) => (x.themes ?? []).includes(themeVal()));
+    if (marketVal() === "crypto" || themeVal() === "all") return r;
+    return r.filter((x: Row) => (x.themes ?? []).includes(themeVal()));
   });
 
   const boardTitle = createMemo(() => {
+    if (marketVal() === "crypto") {
+      const name = CRYPTO_FILTER_NAMES[filterVal()] || filterVal();
+      return `${name} 언급 상위 코인 · ${filteredRows().length}개`;
+    }
     const base = `${FILTER_NAMES[filterVal()] || filterVal()} 언급 상위` +
       (Number(priceVal()) > 0 ? ` 페니주식 (<$${priceVal()})` : " 종목");
     const themeSuffix = themeVal() !== "all" ? ` · ${themeVal()}` : "";
@@ -571,8 +594,11 @@ export default function Dashboard() {
     clearChart();
     loadDetail();
     loadPosts(ticker);
-    loadFundamentals(ticker);
-    loadShort(ticker);
+    // 펀더멘털(SEC EDGAR)·공매도(FINRA)는 주식 전용 개념 — 크립토 티커는 조회하지 않음
+    if (!isCryptoTicker(ticker)) {
+      loadFundamentals(ticker);
+      loadShort(ticker);
+    }
   }
 
   function closeDetail() {
@@ -874,16 +900,28 @@ export default function Dashboard() {
       </header>
 
       <div class="controls">
+        <button type="button" class="market-toggle" onClick={toggleMarket} disabled={loading()}>
+          {marketVal() === "stocks" ? "🪙 크립토로 보기" : "📈 주식으로 보기"}
+        </button>
         <label>서브레딧
-          <select value={filterVal()} onChange={(e) => { setFilterVal(e.currentTarget.value); load(); }}>
-            <option value="all-stocks" selected>전체 주식 집계</option>
-            <option value="wallstreetbets">r/wallstreetbets</option>
-            <option value="pennystocks">r/pennystocks</option>
-            <option value="stocks">r/stocks</option>
-            <option value="investing">r/investing</option>
-            <option value="shortsqueeze">r/Shortsqueeze</option>
-          </select>
+          <Show when={marketVal() === "stocks"} fallback={
+            <select value={filterVal()} onChange={(e) => { setFilterVal(e.currentTarget.value); load(); }}>
+              <For each={Object.entries(CRYPTO_FILTER_NAMES)}>{([v, label]) => (
+                <option value={v}>{label}</option>
+              )}</For>
+            </select>
+          }>
+            <select value={filterVal()} onChange={(e) => { setFilterVal(e.currentTarget.value); load(); }}>
+              <option value="all-stocks" selected>전체 주식 집계</option>
+              <option value="wallstreetbets">r/wallstreetbets</option>
+              <option value="pennystocks">r/pennystocks</option>
+              <option value="stocks">r/stocks</option>
+              <option value="investing">r/investing</option>
+              <option value="shortsqueeze">r/Shortsqueeze</option>
+            </select>
+          </Show>
         </label>
+        <Show when={marketVal() === "stocks"}>
         <label>가격 필터
           <select value={priceVal()} onChange={(e) => { setPriceVal(e.currentTarget.value); load(); }}>
             <option value="5" selected>$5 미만</option>
@@ -899,6 +937,7 @@ export default function Dashboard() {
             )}</For>
           </select>
         </label>
+        </Show>
         <button class="refresh" id="btn-refresh" disabled={loading()} onClick={load}>새로고침</button>
         <div class="view-toggle" role="group" aria-label="보기 모드">
           <button type="button" class={viewMode() === "list" ? "active" : ""} onClick={() => switchView("list")}>목록</button>
@@ -1196,6 +1235,7 @@ export default function Dashboard() {
               </li>
             )}</For>
           </ul>
+          <Show when={!isCryptoTicker(dlgTicker())}>
           <h3 class="dlg-sub">공매도 <span class="dlg-note">잔고: 격주 보고(~2주 지연) · 비중: 전일</span></h3>
           <Show when={shortLoading()}><p class="dlg-status">공매도 데이터 불러오는 중…</p></Show>
           <Show when={!shortLoading() && shortD()}>
@@ -1224,6 +1264,7 @@ export default function Dashboard() {
               </div>
             </Show>
           </Show>
+          </Show>
           <h3 class="dlg-sub">레딧 게시물 (최근 1개월)</h3>
           <ul class="post-list">
             <Show when={redditPosts().length} fallback={<li class="post-empty">{redditEmpty()}</li>}>
@@ -1246,6 +1287,7 @@ export default function Dashboard() {
               )}</For>
             </Show>
           </ul>
+          <Show when={!isCryptoTicker(dlgTicker())}>
           <Show when={fundLoading()}><p class="dlg-status">재무/공시 불러오는 중…</p></Show>
           <Show when={fundError()}><p class="dlg-status">{fundError()}</p></Show>
           <Show when={!fundLoading()}>
@@ -1273,6 +1315,7 @@ export default function Dashboard() {
                 </ul>
               </Show>
             </Show>
+          </Show>
           </Show>
           <p class="disclaimer">1년 일봉 기준으로 자동 계산된 참고 지표이며, 투자 판단의 근거가 아닙니다.</p>
         </div>

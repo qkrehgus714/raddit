@@ -33,11 +33,11 @@ export interface DataPayload {
 }
 
 export async function getData(
-  filterName: string, maxPrice: number, minMentions: number,
+  filterName: string, maxPrice: number, minMentions: number, market: "stocks" | "crypto" = "stocks",
 ): Promise<DataPayload> {
-  const key = `${filterName}|${maxPrice}|${minMentions}`;
+  const key = `${market}|${filterName}|${maxPrice}|${minMentions}`;
   return dataCache.getOrCompute(key, async () => {
-    const all = (await up.fetchMentions(filterName)).filter(it => it.mentions >= minMentions);
+    const all = (await up.fetchMentions(filterName, market)).filter(it => it.mentions >= minMentions);
     // 전수 batch 가격조회 (상위 N slice 제거 — 페니주식이 멘션 하위권에 묻혀 누락되는 문제 방지)
     await up.attachQuotesBatch(all);
     // Yahoo 대량 실패(429 등) 시 빈 결과가 캐시를 덮어쓰는 것을 방지 — 누락률이 비정상적으로
@@ -48,19 +48,24 @@ export async function getData(
         throw new Error(`시세 조회 대량 실패 (quote ${withQuote}/${all.length}) — Yahoo 레이트리밋 의심`);
       }
     }
-    const items = all.filter(it => {
-      if (!it.quote || it.quote.price == null) return false;
-      if (maxPrice > 0) {
-        if (it.quote.price >= maxPrice) return false;
-        // 페니모드: 실제 주식(EQUITY)만 — 레버리지 ETF(SOXS·MSOS 등) 노이즈 제외
-        if (it.quote.type && it.quote.type !== "EQUITY") return false;
-      }
-      return true;
-    });
-    // 표시 대상(필터 후)에만 호가잔량 비율 부착 — 배치(v7/quote+crumb)
-    await up.attachBidAskBatch(items);
-    // 테마 필터용 — 큐레이션된 티커 매핑 기반, 네트워크 호출 없음 (up.attachThemes 참고)
-    up.attachThemes(items);
+    // 크립토는 페니주식 가격 상한·EQUITY 타입 개념이 없음 — 시세 조회 성공 여부만 확인
+    const items = market === "crypto"
+      ? all.filter(it => it.quote && it.quote.price != null)
+      : all.filter(it => {
+        if (!it.quote || it.quote.price == null) return false;
+        if (maxPrice > 0) {
+          if (it.quote.price >= maxPrice) return false;
+          // 페니모드: 실제 주식(EQUITY)만 — 레버리지 ETF(SOXS·MSOS 등) 노이즈 제외
+          if (it.quote.type && it.quote.type !== "EQUITY") return false;
+        }
+        return true;
+      });
+    if (market === "stocks") {
+      // 표시 대상(필터 후)에만 호가잔량 비율 부착 — 배치(v7/quote+crumb)
+      await up.attachBidAskBatch(items);
+      // 테마 필터용 — 큐레이션된 티커 매핑 기반, 네트워크 호출 없음 (up.attachThemes 참고)
+      up.attachThemes(items);
+    }
     return {
       generated_at: kstDateTime(),
       filter: filterName,
