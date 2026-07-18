@@ -229,14 +229,22 @@ export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, co
   await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
-// ── 테마 태그 (#85) ──
+// ── 테마 태그 (#85, #87) ──
 // GICS 섹터(#81)는 "AI"처럼 여러 산업에 걸친 테마를 표현할 수 없어, 큐레이션된
 // 티커→테마 매핑으로 대체한다. 네트워크 호출이 없어 즉시 태깅되며, 한 티커가
 // 여러 테마에 속할 수 있다. 신규/편입 종목은 목록을 사람이 직접 갱신해야 한다.
 const THEME_TICKERS: Record<string, string[]> = {
-  "반도체": ["NVDA","AMD","INTC","TSM","AVGO","QCOM","MU","TXN","ARM","ASML","AMAT","LRCX","KLAC","MRVL","ON","NXPI","STM","SMCI","WOLF"],
-  "AI": ["NVDA","MSFT","GOOGL","GOOG","META","AMZN","PLTR","AI","SMCI","AVGO","AMD","ORCL","CRM","IBM","SNOW","NOW","ARM"],
-  "우주": ["RKLB","LUNR","ASTS","SPCE","RDW","ASTR","LMT","BA","NOC","RTX","MAXR","IRDM","VSAT","GSAT"],
+  "반도체": ["NVDA","AMD","INTC","TSM","AVGO","QCOM","MU","TXN","ARM","ASML","AMAT","LRCX","KLAC","MRVL","ON","NXPI","STM","SMCI","WOLF",
+    "AAOI","AMKR","MRAM","SNDK","SNPS","TER","SOXL","SOXS","SOXX","SMH"],
+  "AI": ["NVDA","MSFT","GOOGL","GOOG","META","AMZN","PLTR","AI","SMCI","AVGO","AMD","ORCL","CRM","IBM","SNOW","NOW","ARM",
+    "CRWV","NBIS","IREN","APLD","DELL"],
+  "우주": ["RKLB","LUNR","ASTS","SPCE","RDW","ASTR","LMT","BA","NOC","RTX","MAXR","IRDM","VSAT","GSAT",
+    "SPCX","PL"],
+  "바이오/제약": ["JNJ","LLY","PFE","RMD","ISRG","COO","SLS","DRTS"],
+  "에너지/자원": ["AM","AR","BE","CVX","DTE","ES","ET","EU","FCEL","GLP","HP","HBM","AGI","OR","MP","NEE","NEXT","OXY",
+    "PUMP","SMR","SO","GLD","SLV","TE","UUUU","USO","XOM","XLE","TAN","OKLO","BWXT","DC","GEV"],
+  "전기차/배터리": ["TSLA","RIVN","GM","QS","VC"],
+  "대마초": ["TLRY","CGC","ACB","SNDL","CRON","GRWG","CURLF","TCNNF","GTBIF"],
 };
 const TICKER_THEMES = new Map<string, string[]>();
 for (const [theme, tickers] of Object.entries(THEME_TICKERS)) {
