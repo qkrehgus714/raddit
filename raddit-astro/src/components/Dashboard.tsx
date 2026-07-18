@@ -1084,6 +1084,7 @@ export default function Dashboard() {
           <h2>{boardTitle()}</h2>
           <span class="hint">{viewMode() === "list" ? "열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석"
             : viewMode() === "grid" ? "카드 클릭 → 실시간 차트와 분석"
+            : viewMode() === "hype" ? "평소 언급량 대비 급증 종목 · 행 클릭 → 실시간 차트와 분석"
             : "이상 급등 감지 이력 · 행 클릭 → 실시간 차트와 분석"}</span>
         </div>
         <Show when={viewMode() === "list"}>
