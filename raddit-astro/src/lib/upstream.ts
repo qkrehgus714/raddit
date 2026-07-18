@@ -273,9 +273,25 @@ const THEME_TICKERS: Record<string, string[]> = {
   "채권/현금성 ETF": ["BND","SGOV","IG"],
   "국가 ETF": ["KORU","EWY","YINN"],
 };
+// 크립토 테마 (#102) — 티커는 attachThemes에서 "-USD" 형식으로 들어오므로 키에 접미사를 붙인다.
+const CRYPTO_THEME_TICKERS: Record<string, string[]> = {
+  "레이어1": ["BTC","ETH","SOL","ADA","DOT","ATOM","NEAR","AVAX","ALGO","XLM","TRX","NEO","HBAR","ONE","APT","SUI","XMR","BNB"],
+  "밈코인": ["DOGE","SHIB","BONK","TRUMP","PEPE","FLOKI","WIF","MEME"],
+  "디파이": ["AAVE","UNI","LINK","MKR","COMP","LRC","BAL","CRV","SUSHI"],
+  "스테이블코인": ["USDT","USDC","DAI","PAX","PAXG","TUSD","FDUSD","WBTC"],
+  "AI코인": ["FET","AGIX","RNDR","TAO","OCEAN","GRT"],
+};
 const TICKER_THEMES = new Map<string, string[]>();
 for (const [theme, tickers] of Object.entries(THEME_TICKERS)) {
   for (const ticker of tickers) {
+    const arr = TICKER_THEMES.get(ticker);
+    if (arr) arr.push(theme);
+    else TICKER_THEMES.set(ticker, [theme]);
+  }
+}
+for (const [theme, tickers] of Object.entries(CRYPTO_THEME_TICKERS)) {
+  for (const base of tickers) {
+    const ticker = `${base}-USD`;
     const arr = TICKER_THEMES.get(ticker);
     if (arr) arr.push(theme);
     else TICKER_THEMES.set(ticker, [theme]);

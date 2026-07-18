@@ -84,6 +84,7 @@ export default function Dashboard() {
   const [marketVal, setMarketVal] = createSignal<"stocks" | "crypto">("stocks"); // 시장 토글 (#93)
   const [filterVal, setFilterVal] = createSignal("all-stocks");
   const [priceVal, setPriceVal] = createSignal("5");
+  const [cryptoPriceVal, setCryptoPriceVal] = createSignal("0"); // 크립토 가격 필터 (#102) — 기본 전체(필터 없음)
   const [themeVal, setThemeVal] = createSignal("all"); // 테마 필터 (#85) — "all"이면 필터 없음
   const [loading, setLoading] = createSignal(false);
   const [status, setStatus] = createSignal("");
@@ -260,8 +261,10 @@ export default function Dashboard() {
     setStatusError(false);
     try {
       const market = marketVal();
-      const maxPrice = market === "crypto" ? 0 : priceVal();
-      const res = await fetch(`/api/data?market=${market}&filter=${encodeURIComponent(filterVal())}&max_price=${maxPrice}`);
+      const maxPrice = market === "crypto" ? cryptoPriceVal() : priceVal();
+      // 크립토는 종목당 언급량이 주식보다 훨씬 적어 min_mentions=2 기준이면 코인 종류가 지나치게 좁아짐
+      const minMentions = market === "crypto" ? 1 : 2;
+      const res = await fetch(`/api/data?market=${market}&filter=${encodeURIComponent(filterVal())}&max_price=${maxPrice}&min_mentions=${minMentions}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.status);
       const filtered = data.items.filter((d: Row) =>
@@ -292,6 +295,7 @@ export default function Dashboard() {
     const next = marketVal() === "stocks" ? "crypto" : "stocks";
     setMarketVal(next);
     setFilterVal(next === "crypto" ? "all-crypto" : "all-stocks");
+    setThemeVal("all"); // 시장별 테마 종류가 달라 선택값 초기화
     load();
   }
 
@@ -310,18 +314,18 @@ export default function Dashboard() {
 
   const filteredRows = createMemo(() => {
     const r = rows();
-    if (marketVal() === "crypto" || themeVal() === "all") return r;
-    return r.filter((x: Row) => (x.themes ?? []).includes(themeVal()));
+    return themeVal() === "all" ? r : r.filter((x: Row) => (x.themes ?? []).includes(themeVal()));
   });
 
   const boardTitle = createMemo(() => {
+    const themeSuffix = themeVal() !== "all" ? ` · ${themeVal()}` : "";
     if (marketVal() === "crypto") {
       const name = CRYPTO_FILTER_NAMES[filterVal()] || filterVal();
-      return `${name} 언급 상위 코인 · ${filteredRows().length}개`;
+      const priceSuffix = Number(cryptoPriceVal()) > 0 ? ` (<$${cryptoPriceVal()})` : "";
+      return `${name} 언급 상위 코인${priceSuffix}${themeSuffix} · ${filteredRows().length}개`;
     }
     const base = `${FILTER_NAMES[filterVal()] || filterVal()} 언급 상위` +
       (Number(priceVal()) > 0 ? ` 페니주식 (<$${priceVal()})` : " 종목");
-    const themeSuffix = themeVal() !== "all" ? ` · ${themeVal()}` : "";
     return `${base}${themeSuffix} · ${filteredRows().length}개`;
   });
 
@@ -887,7 +891,7 @@ export default function Dashboard() {
   return (
     <>
       <header>
-        <h1><span class="live-dot" classList={{ loading: loading() }}></span>레딧 페니주식 워치보드</h1>
+        <h1><span class="live-dot" classList={{ loading: loading() }}></span>{marketVal() === "crypto" ? "레딧 크립토 워치보드" : "레딧 페니주식 워치보드"}</h1>
         <span class="ver-badge" role="button" tabindex="0"
           onClick={openChangelog}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openChangelog(); } }}
@@ -921,13 +925,20 @@ export default function Dashboard() {
             </select>
           </Show>
         </label>
-        <Show when={marketVal() === "stocks"}>
         <label>가격 필터
-          <select value={priceVal()} onChange={(e) => { setPriceVal(e.currentTarget.value); load(); }}>
-            <option value="5" selected>$5 미만</option>
-            <option value="1">$1 미만</option>
-            <option value="0">전체 (필터 없음)</option>
-          </select>
+          <Show when={marketVal() === "stocks"} fallback={
+            <select value={cryptoPriceVal()} onChange={(e) => { setCryptoPriceVal(e.currentTarget.value); load(); }}>
+              <option value="0" selected>전체 (필터 없음)</option>
+              <option value="1">$1 미만</option>
+              <option value="0.01">$0.01 미만</option>
+            </select>
+          }>
+            <select value={priceVal()} onChange={(e) => { setPriceVal(e.currentTarget.value); load(); }}>
+              <option value="5" selected>$5 미만</option>
+              <option value="1">$1 미만</option>
+              <option value="0">전체 (필터 없음)</option>
+            </select>
+          </Show>
         </label>
         <label>테마
           <select value={themeVal()} onChange={(e) => setThemeVal(e.currentTarget.value)}>
@@ -937,7 +948,6 @@ export default function Dashboard() {
             )}</For>
           </select>
         </label>
-        </Show>
         <button class="refresh" id="btn-refresh" disabled={loading()} onClick={load}>새로고침</button>
         <div class="view-toggle" role="group" aria-label="보기 모드">
           <button type="button" class={viewMode() === "list" ? "active" : ""} onClick={() => switchView("list")}>목록</button>
