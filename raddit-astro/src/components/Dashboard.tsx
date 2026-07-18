@@ -14,6 +14,13 @@ const FILTER_NAMES: Record<string, string> = {
   "investing": "r/investing", "shortsqueeze": "r/Shortsqueeze",
 };
 const RANGES: [string, string][] = [["min","5분"],["day","일"],["week","주"],["month","월"],["year","년"]];
+// Yahoo Finance summaryProfile의 GICS 섹터(영문) → 한국어 라벨. 매핑에 없는 값은 원문 그대로 표시.
+const SECTOR_LABELS: Record<string, string> = {
+  Technology: "기술", Healthcare: "헬스케어", "Financial Services": "금융",
+  "Consumer Cyclical": "임의소비재", "Consumer Defensive": "필수소비재",
+  Industrials: "산업재", Energy: "에너지", "Basic Materials": "소재",
+  "Real Estate": "부동산", Utilities: "유틸리티", "Communication Services": "커뮤니케이션",
+};
 const CANDLE_LABEL: Record<string, string> = { min:"5분봉", day:"일봉", week:"주봉", month:"월봉", year:"연봉" };
 
 const COLS = [
@@ -76,12 +83,12 @@ export default function Dashboard() {
   const [sortDir, setSortDir] = createSignal(-1);
   const [filterVal, setFilterVal] = createSignal("all-stocks");
   const [priceVal, setPriceVal] = createSignal("5");
+  const [sectorVal, setSectorVal] = createSignal("all"); // 섹터 필터 (#81) — "all"이면 필터 없음
   const [loading, setLoading] = createSignal(false);
   const [status, setStatus] = createSignal("");
   const [statusError, setStatusError] = createSignal(false);
   const [snapshot, setSnapshot] = createSignal("불러오는 중…");
   const [scanned, setScanned] = createSignal(0);
-  const [boardTitle, setBoardTitle] = createSignal("언급 상위 종목");
   const [version, setVersion] = createSignal("v0.1.0");
   const [starCount, setStarCount] = createSignal<number | null>(null);
   // 보기 모드 (목록/스크리너) — localStorage 에 저장
@@ -257,10 +264,6 @@ export default function Dashboard() {
       setRows(filtered);
       setScanned(data.scanned);
       setSnapshot(`${data.generated_at} 기준`);
-      setBoardTitle(
-        `${FILTER_NAMES[filterVal()] || filterVal()} 언급 상위` +
-        (Number(priceVal()) > 0 ? ` 페니주식 (<$${priceVal()})` : " 종목") + ` · ${filtered.length}개`
-      );
       setStatus("");
     } catch (err: any) {
       setStatus("불러오기 실패: " + err.message);
@@ -276,8 +279,27 @@ export default function Dashboard() {
     else { setSortKey(key); setSortDir(-1); }
   }
 
-  const sortedRows = createMemo(() => {
+  // 섹터 필터 (#81) — 현재 로드된 종목 중 실제 존재하는 섹터만 드롭다운에 노출
+  const sectorOptions = createMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows()) if (r.sector) set.add(r.sector);
+    return [...set].sort();
+  });
+
+  const filteredRows = createMemo(() => {
     const r = rows();
+    return sectorVal() === "all" ? r : r.filter((x: Row) => x.sector === sectorVal());
+  });
+
+  const boardTitle = createMemo(() => {
+    const base = `${FILTER_NAMES[filterVal()] || filterVal()} 언급 상위` +
+      (Number(priceVal()) > 0 ? ` 페니주식 (<$${priceVal()})` : " 종목");
+    const sectorSuffix = sectorVal() !== "all" ? ` · ${SECTOR_LABELS[sectorVal()] || sectorVal()}` : "";
+    return `${base}${sectorSuffix} · ${filteredRows().length}개`;
+  });
+
+  const sortedRows = createMemo(() => {
+    const r = filteredRows();
     if (!r.length) return [];
     return [...r].sort((a, b) => {
       const va = sortVal(a, sortKey()), vb = sortVal(b, sortKey());
@@ -286,12 +308,12 @@ export default function Dashboard() {
   });
 
   const maxMentions = createMemo(() => {
-    const r = rows();
+    const r = filteredRows();
     return r.length ? Math.max(...r.map(x => x.mentions)) : 1;
   });
 
   const tiles = createMemo(() => {
-    const r = rows();
+    const r = filteredRows();
     const priced = r.filter((x: Row) => x.chg != null);
     const topMover = priced.length ? priced.reduce((a: Row, b: Row) => (b.chg > a.chg ? b : a)) : null;
     const topClean = r.length ? r.reduce((a: Row, b: Row) => (b.mentions > a.mentions ? b : a)) : null;
@@ -829,6 +851,14 @@ export default function Dashboard() {
             <option value="5" selected>$5 미만</option>
             <option value="1">$1 미만</option>
             <option value="0">전체 (필터 없음)</option>
+          </select>
+        </label>
+        <label>섹터
+          <select value={sectorVal()} onChange={(e) => setSectorVal(e.currentTarget.value)}>
+            <option value="all">전체</option>
+            <For each={sectorOptions()}>{(s) => (
+              <option value={s}>{SECTOR_LABELS[s] || s}</option>
+            )}</For>
           </select>
         </label>
         <button class="refresh" id="btn-refresh" disabled={loading()} onClick={load}>새로고침</button>
