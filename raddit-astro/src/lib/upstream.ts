@@ -345,6 +345,71 @@ export async function fetchShortInterest(ticker: string, retry = true): Promise<
   return parseShortInterest(await res.json());
 }
 
+// ── FINRA Reg SHO 일별 공매도 거래 비중 (#76 v2) — 무인증, 전 종목 단일 파일 ──
+
+const FINRA_SHVOL_URL = (yyyymmdd: string) =>
+  `https://cdn.finra.org/equity/regsho/daily/CNMSshvol${yyyymmdd}.txt`;
+
+/**
+ * 시도할 파일 날짜 후보 — ET 기준 전일부터 주말을 건너뛰며 최대 max개 (YYYYMMDD).
+ * 파일은 장 마감 후 저녁 게시라 당일분은 없다고 가정. 휴일 404는 호출부가 다음 후보로.
+ */
+export function finraDateCandidates(now: Date = new Date(), max = 5): string[] {
+  const etToday = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(now);
+  const d = new Date(`${etToday}T00:00:00Z`);
+  const out: string[] = [];
+  while (out.length < max) {
+    d.setUTCDate(d.getUTCDate() - 1);
+    const dow = d.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    out.push(d.toISOString().slice(0, 10).replace(/-/g, ""));
+  }
+  return out;
+}
+
+/**
+ * 파이프 구분 파일 파싱: Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market.
+ * 헤더·형식 불일치·TotalVolume 0 행은 제외. short_vol_pct = Short/Total × 100.
+ */
+export function parseFinraShortVolume(
+  text: string,
+): Map<string, { short_vol_pct: number; total_volume: number }> {
+  const map = new Map<string, { short_vol_pct: number; total_volume: number }>();
+  for (const line of text.split(/\r?\n/)) {
+    const parts = line.split("|");
+    if (parts.length < 5) continue;
+    const symbol = parts[1];
+    const sv = Number(parts[2]);
+    const tv = Number(parts[4]);
+    if (!symbol || symbol === "Symbol" || !Number.isFinite(sv) || !Number.isFinite(tv) || tv <= 0) continue;
+    map.set(symbol, { short_vol_pct: round4((sv / tv) * 100), total_volume: tv });
+  }
+  return map;
+}
+
+export interface FinraShortVolume {
+  date: string; // YYYYMMDD — 실제로 로드된 파일 날짜
+  map: Map<string, { short_vol_pct: number; total_volume: number }>;
+}
+
+/**
+ * 가장 최근 영업일 파일을 내려받아 파싱. 404(주말·휴일)는 다음 후보로 넘어가고
+ * 5영업일 내 파일이 없으면 null. 그 외 HTTP 오류·네트워크 오류는 throw.
+ */
+export async function fetchFinraShortVolume(now: Date = new Date()): Promise<FinraShortVolume | null> {
+  for (const date of finraDateCandidates(now)) {
+    const res = await fetch(FINRA_SHVOL_URL(date), {
+      headers: { "User-Agent": BROWSER_UA },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.status === 404) continue;
+    if (!res.ok) throw new Error(`FINRA Reg SHO 응답 ${res.status}`);
+    const map = parseFinraShortVolume(await res.text());
+    if (map.size) return { date, map };
+  }
+  return null;
+}
+
 export interface ChartData { meta: Record<string, any>; points: Point[]; }
 
 function round4(v: number): number { return Math.round(v * 1e4) / 1e4; }
