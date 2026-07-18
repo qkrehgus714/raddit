@@ -4,6 +4,9 @@
 # 이슈 #97: 한국어 assertive 프로필, dev 대상 PR 자동 리뷰, 모노레포 맞춤 지침
 
 language: ko-KR
+tone_instructions: >-
+  문제의 근거와 영향을 간결하고 구체적으로 설명하고, 사소한 취향보다
+  정확성, 보안, 회귀 위험, 테스트 누락을 우선해서 검토한다.
 
 reviews:
   profile: assertive
@@ -20,6 +23,9 @@ reviews:
     drafts: false
     auto_incremental_review: true
     auto_pause_after_reviewed_commits: 5
+    ignore_title_keywords:
+      - WIP
+      - "[skip review]"
     base_branches:
       - dev
 
@@ -74,7 +80,7 @@ reviews:
         - 업스트림 응답(RSS XML) 스키마 변경에 대한 방어 코드 점검.
         - 시크릿은 환경변수(RPC_KEY 등)에서만. 하드코딩 금지.
     # GitHub Actions 워크플로우
-    - path: ".github/workflows/**/*.yml"
+    - path: ".github/workflows/**"
       instructions: |
         Railway 배포 워크플로우입니다.
         - `permissions:` 블록을 최소 권한으로 명시.
