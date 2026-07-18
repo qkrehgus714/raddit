@@ -14,6 +14,8 @@ const dailyCache = new TtlCache<up.ChartData>(600_000, 600_000);
 const postsCache = new TtlCache<PostsPayload>(600_000, 300_000);
 const searchCache = new TtlCache<SearchPayload>(600_000, 600_000);
 const fundamentalsCache = new TtlCache<FundamentalsPayload>(600_000, 600_000);
+// Hype (#95) — /api/data 의 결과를 변환하므로 동일 TTL 유지
+const hypeCache = new TtlCache<HypePayload>(120_000, 240_000);
 // StockTwits 공개 엔드포인트가 Cloudflare JS 챌린지(403) 로 서버사이드 차단 —
 // 소스 결정(#40/#56) 전까지 dormant. STOCKTWITS_ENABLED=1 시에만 호출·노출.
 const ST_ENABLED = process.env.STOCKTWITS_ENABLED === "1";
@@ -72,6 +74,102 @@ export async function getData(
       max_price: maxPrice,
       scanned: all.length,
       items,
+    };
+  });
+}
+
+// ── Hype (#95) ──
+// 평소 언급량 대비 최근 급증 강도. 절대 언급량만으로 SPY·BTC 가 상단을
+// 독점하지 않도록 종목별 기준선(mentions_24h_ago) 대비 증가율·증가량을 핵심으로.
+export interface HypeItem {
+  ticker: string;
+  name?: string;
+  rank: number;                // 현재 ApeWisdom 순위 (fetchMentions가 정렬한 순위)
+  rank_24h_ago: number | null;
+  mentions: number;            // 현재 집계 구간 언급 수
+  mentions_24h_ago: number | null;  // 원본 평소 기준선
+  baseline: number;            // 점수 계산에 사용된 기준선 (max(mentions_24h_ago, HYPE_MIN_BASELINE))
+  delta: number;               // 증가량 = mentions - baseline
+  growth_pct: number;          // 증가율 = delta / baseline * 100
+  hype_score: number;          // delta * (1 + growth_pct/100) — 절대량·비율 동시 반영
+  upvotes: number;
+  quote?: up.Quote | null;
+}
+
+export interface HypePayload {
+  generated_at: string;
+  filter: string;
+  market: "stocks" | "crypto";
+  scanned: number;
+  items: HypeItem[];
+}
+
+// 최소 기준선 — 소수 언급(mentions_24h_ago = 1~2)이 ±1 변동으로 폭발적 증가율을
+// 만드는 노이즈를 억제. ApeWisdom 집계 구간(수시간) 특성상 5 정도가 의미 있는
+// 급등과 무작위 변동을 가르는 임계값.
+const HYPE_MIN_BASELINE = 5;
+
+export async function getHype(
+  filterName: string, market: "stocks" | "crypto",
+): Promise<HypePayload> {
+  const key = `${market}|${filterName}`;
+  return hypeCache.getOrCompute(key, async () => {
+    // /api/data 와 동일 원천(ApeWisdom) — fetchMentions가 mentions 내림차순 정렬.
+    const all = await up.fetchMentions(filterName, market);
+    // rank는 현재 mentions 순위 — fetchMentions 결과 인덱스 기반
+    const ranked = new Map(all.map((it, i) => [it.ticker, i + 1]));
+    const scored: HypeItem[] = all
+      .filter(it => it.mentions >= 2) // /api/data 기본값과 동일 (노이즈 1회 언급 제거)
+      .map(it => {
+        const baseline = Math.max(it.mentions_24h_ago ?? 0, HYPE_MIN_BASELINE);
+        const delta = it.mentions - baseline;
+        const growth_pct = (delta / baseline) * 100;
+        // 급증(delta>0)에만 가중치 부여 — 감소 종목은 score 0.
+        // score = delta * (1 + growth_pct/100)
+        //   → delta 5/growth 100% = 10
+        //   → delta 50/growth 500% = 300
+        // 절대량과 비율을 동시에 반영: 소수 급등(절대량 작음)은 낮고,
+        // 대형 종목의 큰 절대 증가(비율 작음)도 낮음.
+        const hype_score = delta > 0 ? delta * (1 + growth_pct / 100) : 0;
+        return {
+          ticker: it.ticker,
+          name: it.name,
+          rank: ranked.get(it.ticker) ?? 0,
+          rank_24h_ago: it.rank_24h_ago ?? null,
+          mentions: it.mentions,
+          mentions_24h_ago: it.mentions_24h_ago ?? null,
+          baseline,
+          delta,
+          growth_pct,
+          hype_score,
+          upvotes: it.upvotes,
+          quote: it.quote ?? null,
+        };
+      })
+      .filter(it => it.hype_score > 0)
+      .sort((a, b) => b.hype_score - a.hype_score)
+      .slice(0, 50);
+    // 상위 50개에만 시세 보강 — 언급 원본(quote 없음)에서는 현재가·등락이 비어 있으므로
+    // 기존 attachQuotesBatch 경로를 적용해 Hype 표의 가격·등락 칸을 채운다.
+    const toEnrich = scored.filter(it => !it.quote);
+    if (toEnrich.length) {
+      // attachQuotesBatch는 MentionItem[]을 받으므로 최소 필수 필드만 매핑
+      const tmp: up.MentionItem[] = toEnrich.map(it => ({
+        rank: it.rank, ticker: it.ticker, name: it.name,
+        mentions: it.mentions, upvotes: it.upvotes,
+      }));
+      await up.attachQuotesBatch(tmp);
+      const quoteMap = new Map(tmp.map(t => [t.ticker, t.quote ?? null]));
+      for (const it of scored) {
+        if (!it.quote && quoteMap.has(it.ticker)) it.quote = quoteMap.get(it.ticker);
+      }
+    }
+    return {
+      generated_at: kstDateTime(),
+      filter: filterName,
+      market,
+      scanned: all.length,
+      items: scored,
     };
   });
 }

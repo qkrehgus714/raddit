@@ -95,7 +95,7 @@ export default function Dashboard() {
   // 보기 모드 (목록/스크리너) — localStorage 에 저장
   // 보기 모드 (목록/스크리너) — localStorage 저장. SSR/hydration 일치를 위해
   // 초기값은 'list' 고정, onMount 에서 localStorage 를 읽어 grid 로 전환.
-  type ViewMode = "list" | "grid" | "alerts";
+  type ViewMode = "list" | "grid" | "alerts" | "hype";
   const [viewMode, setViewMode] = createSignal<ViewMode>("list");
   const switchView = (m: ViewMode) => { setViewMode(m); try { localStorage.setItem("raddit-view", m); } catch {} };
 
@@ -131,6 +131,74 @@ export default function Dashboard() {
     loadAlerts();
     const id = setInterval(loadAlerts, 60_000);
     onCleanup(() => clearInterval(id));
+  });
+
+  // 🔥 Hype 뷰 (#95) — 커뮤니티 언급량 급증 종목
+  interface HypeRow {
+    ticker: string; name: string | null;
+    mentions: number; mentions_24h_ago: number | null;
+    baseline: number; delta: number; growth_pct: number; hype_score: number;
+    rank: number | null; rank_24h_ago: number | null;
+    upvotes: number;
+    price: number | null; chg: number | null;
+  }
+  const [hypeRows, setHypeRows] = createSignal<HypeRow[]>([]);
+  const [hypeErr, setHypeErr] = createSignal("");
+  const [hypeAt, setHypeAt] = createSignal("");
+  const [hypeLoading, setHypeLoading] = createSignal(false);
+  let hypeSeq = 0;
+  let hypeAbort: AbortController | null = null;
+
+  const loadHype = async () => {
+    const seq = ++hypeSeq;
+    if (hypeAbort) hypeAbort.abort();
+    hypeAbort = new AbortController();
+    // 재로딩 시작 시 이전 결과·오류 초기화 — 첫 요청 중 빈 UI 노출 억제
+    setHypeRows([]);
+    setHypeErr("");
+    setHypeLoading(true);
+    try {
+      const market = marketVal();
+      // hypeAbort.signal(뷰 이탈·중복 요청 취소) + 15s 타임아웃을 동시 적용
+      const signal = AbortSignal.any([hypeAbort.signal, AbortSignal.timeout(15000)]);
+      const res = await fetch(
+        `/api/hype?market=${market}&filter=${encodeURIComponent(filterVal())}`,
+        { signal },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      // 최신 요청 결과만 반영 — 뷰 이탈/필터 변경 후 늦게 도착한 응답 무시
+      if (seq !== hypeSeq) return;
+      setHypeRows((d.items ?? []).map((r: any) => ({
+        ticker: r.ticker, name: r.name ?? null,
+        mentions: r.mentions,
+        mentions_24h_ago: r.mentions_24h_ago ?? null,
+        baseline: r.baseline ?? Math.max(r.mentions_24h_ago ?? 0, 5),
+        delta: r.delta, growth_pct: r.growth_pct, hype_score: r.hype_score,
+        rank: r.rank ?? null, rank_24h_ago: r.rank_24h_ago ?? null,
+        upvotes: r.upvotes,
+        price: r.quote?.price ?? null, chg: r.quote?.day_change_pct ?? null,
+      })));
+      setHypeAt(d.generated_at ?? "");
+      setHypeErr("");
+    } catch (err: any) {
+      if (seq !== hypeSeq) return;
+      if (err?.name === "AbortError" || err?.name === "TimeoutError") return;
+      setHypeErr("Hype 데이터를 불러오지 못했습니다");
+    } finally {
+      if (seq === hypeSeq) setHypeLoading(false);
+    }
+  };
+
+  // Hype 뷰가 열려 있는 동안만 2분 갱신 (ApeWisdom 집계 구간이 수시간 단위라 여유 있게)
+  createEffect(() => {
+    if (viewMode() !== "hype") return;
+    loadHype();
+    const id = setInterval(loadHype, 120_000);
+    onCleanup(() => {
+      clearInterval(id);
+      if (hypeAbort) hypeAbort.abort();
+    });
   });
 
   // 상세 모달
@@ -849,7 +917,7 @@ export default function Dashboard() {
   onMount(() => {
     try {
       const saved = localStorage.getItem("raddit-view");
-      if (saved === "grid" || saved === "alerts") setViewMode(saved);
+      if (saved === "grid" || saved === "alerts" || saved === "hype") setViewMode(saved);
     } catch {}
     load();
     fetch("/api/version").then(r => r.json()).then(d => { if (d.version) setVersion(`v${d.version}`); }).catch(() => {});
@@ -943,6 +1011,7 @@ export default function Dashboard() {
           <button type="button" class={viewMode() === "list" ? "active" : ""} onClick={() => switchView("list")}>목록</button>
           <button type="button" class={viewMode() === "grid" ? "active" : ""} onClick={() => switchView("grid")}>스크리너</button>
           <button type="button" class={viewMode() === "alerts" ? "active" : ""} onClick={() => switchView("alerts")}>⚡ 급등</button>
+          <button type="button" class={viewMode() === "hype" ? "active" : ""} onClick={() => switchView("hype")}>🔥 Hype</button>
         </div>
         <div class="search">
           <input
@@ -1015,6 +1084,7 @@ export default function Dashboard() {
           <h2>{boardTitle()}</h2>
           <span class="hint">{viewMode() === "list" ? "열 제목 클릭 → 정렬 · 행 클릭 → 실시간 차트와 분석"
             : viewMode() === "grid" ? "카드 클릭 → 실시간 차트와 분석"
+            : viewMode() === "hype" ? "평소 언급량 대비 급증 종목 · 행 클릭 → 실시간 차트와 분석"
             : "이상 급등 감지 이력 · 행 클릭 → 실시간 차트와 분석"}</span>
         </div>
         <Show when={viewMode() === "list"}>
@@ -1150,6 +1220,60 @@ export default function Dashboard() {
                         : "-"}</td>
                     </tr>
                   )}</For>
+                </Show>
+              </tbody>
+            </table>
+          </div>
+        </Show>
+        <Show when={viewMode() === "hype"}>
+          <div class="scroller">
+            <div class="hint" style={{ "margin-bottom": "8px" }}>
+              종목별 평소 언급량 대비 급증 강도 순 · {hypeAt() ? `${hypeAt()} 기준` : "불러오는 중…"}
+            </div>
+            <table>
+              <thead><tr>
+                <th>Hype</th><th class="left">종목</th><th>현재 언급</th>
+                <th>평소 언급</th><th>증가량</th><th>증가율</th>
+                <th>순위변동</th><th>업보트</th><th>현재가</th><th>등락</th>
+              </tr></thead>
+              <tbody>
+                <Show when={hypeRows().length} fallback={
+                  <tr><td class="empty" colspan="10">
+                    {hypeErr() || (hypeLoading() ? "불러오는 중…" : "평소 대비 급증한 종목이 없습니다")}
+                  </td></tr>
+                }>
+                  <For each={hypeRows()}>{(h) => {
+                    // rank가 있고 rank_24h_ago도 있으면 순위변동 표시
+                    // (모듈 스코프 rankMove 함수와 충돌 피하려 rankDelta로 명명)
+                    const rankDelta = h.rank != null && h.rank_24h_ago != null
+                      ? h.rank_24h_ago - h.rank
+                      : null;
+                    return (
+                      <tr tabindex="0"
+                        onClick={() => openDetail(h.ticker, h.name ?? undefined)}
+                        onKeyDown={(e) => { if (e.key === "Enter") openDetail(h.ticker, h.name ?? undefined); }}
+                      >
+                        <td><strong>{h.hype_score.toFixed(1)}</strong></td>
+                        <td class="left"><span class="tk">{h.ticker}</span><br /><span class="name">{h.name || ""}</span></td>
+                        <td>{h.mentions}</td>
+                        <td class="dim">{h.baseline}</td>
+                        <td><span class="pill up">+{h.delta}</span></td>
+                        <td><span class="pill up">+{h.growth_pct.toFixed(0)}%</span></td>
+                        <td>{h.rank != null && h.rank_24h_ago != null
+                          ? <span class={`pill ${rankDelta! > 0 ? "up" : rankDelta! < 0 ? "down" : "flat"}`}>
+                              {rankDelta! > 0 ? "▲" + rankDelta! : rankDelta! < 0 ? "▼" + (-rankDelta!) : "—"}
+                            </span>
+                          : h.rank_24h_ago == null ? <span class="pill new">NEW</span> : "-"}</td>
+                        <td class="dim">{h.upvotes}</td>
+                        <td>{h.price != null ? fmtPrice(h.price) : "-"}</td>
+                        <td>{h.chg != null
+                          ? <span class={`pill ${h.chg > 0 ? "up" : h.chg < 0 ? "down" : "flat"}`}>
+                              {(h.chg > 0 ? "+" : "") + h.chg.toFixed(2)}%
+                            </span>
+                          : "-"}</td>
+                      </tr>
+                    );
+                  }}</For>
                 </Show>
               </tbody>
             </table>
