@@ -1243,13 +1243,14 @@ export default function Dashboard() {
                 }>
                   <For each={hypeRows()}>{(h) => {
                     // rank가 있고 rank_24h_ago도 있으면 순위변동 표시
-                    const rankMove = h.rank != null && h.rank_24h_ago != null
+                    // (모듈 스코프 rankMove 함수와 충돌 피하려 rankDelta로 명명)
+                    const rankDelta = h.rank != null && h.rank_24h_ago != null
                       ? h.rank_24h_ago - h.rank
                       : null;
                     return (
                       <tr tabindex="0"
-                        onClick={() => openDetail(h.ticker)}
-                        onKeyDown={(e) => { if (e.key === "Enter") openDetail(h.ticker); }}
+                        onClick={() => openDetail(h.ticker, h.name ?? undefined)}
+                        onKeyDown={(e) => { if (e.key === "Enter") openDetail(h.ticker, h.name ?? undefined); }}
                       >
                         <td><strong>{h.hype_score.toFixed(1)}</strong></td>
                         <td class="left"><span class="tk">{h.ticker}</span><br /><span class="name">{h.name || ""}</span></td>
@@ -1258,8 +1259,8 @@ export default function Dashboard() {
                         <td><span class="pill up">+{h.delta}</span></td>
                         <td><span class="pill up">+{h.growth_pct.toFixed(0)}%</span></td>
                         <td>{h.rank != null && h.rank_24h_ago != null
-                          ? <span class={`pill ${rankMove! > 0 ? "up" : rankMove! < 0 ? "down" : "flat"}`}>
-                              {rankMove! > 0 ? "▲" + rankMove! : rankMove! < 0 ? "▼" + (-rankMove!) : "—"}
+                          ? <span class={`pill ${rankDelta! > 0 ? "up" : rankDelta! < 0 ? "down" : "flat"}`}>
+                              {rankDelta! > 0 ? "▲" + rankDelta! : rankDelta! < 0 ? "▼" + (-rankDelta!) : "—"}
                             </span>
                           : h.rank_24h_ago == null ? <span class="pill new">NEW</span> : "-"}</td>
                         <td class="dim">{h.upvotes}</td>
