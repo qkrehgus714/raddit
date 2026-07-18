@@ -74,7 +74,15 @@ export interface MentionItem {
   themes?: string[];
 }
 
-export async function fetchMentions(filter: string): Promise<MentionItem[]> {
+/**
+ * ApeWisdom 크립토 필터는 티커를 "BTC.X" 형식으로 준다. Yahoo Finance 크립토
+ * 심볼("BTC-USD")로 변환해야 차트·시세 조회가 그대로 재사용된다 (#93).
+ */
+function apeWisdomCryptoTicker(raw: string): string {
+  return raw.replace(/\.X$/i, "-USD");
+}
+
+export async function fetchMentions(filter: string, market: "stocks" | "crypto" = "stocks"): Promise<MentionItem[]> {
   const first = await getJson(APEWISDOM_URL(filter, 1));
   let results: MentionItem[] = first.results ?? [];
   const pages = Math.min(Number(first.pages) || 1, 30);
@@ -82,6 +90,9 @@ export async function fetchMentions(filter: string): Promise<MentionItem[]> {
     Array.from({ length: pages - 1 }, (_, i) => getJson(APEWISDOM_URL(filter, i + 2))),
   );
   for (const r of rest) results = results.concat(r.results ?? []);
+  if (market === "crypto") {
+    for (const r of results) r.ticker = apeWisdomCryptoTicker(r.ticker);
+  }
   results.sort((a, b) => b.mentions - a.mentions);
   return results;
 }
@@ -531,7 +542,9 @@ export async function fetchRedditPosts(ticker: string, limit = 15): Promise<Redd
   if (!REDDIT_RPC_URL) {
     throw new Error("REDDIT_RPC_URL 이 설정되지 않음 (raddit-reddit 서비스 미구성)");
   }
-  const url = `${REDDIT_RPC_URL}/rpc/reddit-posts?ticker=${encodeURIComponent(ticker)}&limit=${limit}`;
+  // 크립토 티커("BTC-USD")는 검색어로는 원심볼("BTC")이 매칭이 더 잘 됨
+  const searchTicker = ticker.replace(/-USD$/, "");
+  const url = `${REDDIT_RPC_URL}/rpc/reddit-posts?ticker=${encodeURIComponent(searchTicker)}&limit=${limit}`;
   const headers: Record<string, string> = {};
   if (REDDIT_RPC_KEY) headers["X-RPC-Key"] = REDDIT_RPC_KEY;
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
@@ -551,7 +564,7 @@ export interface NewsItem {
 }
 
 export async function fetchNews(ticker: string): Promise<NewsItem[]> {
-  const data = await getJson(NEWS_SEARCH_URL(ticker));
+  const data = await getJson(NEWS_SEARCH_URL(ticker.replace(/-USD$/, "")));
   return (data.news ?? []).map((n: any) => ({
     title: n.title,
     publisher: n.publisher,
