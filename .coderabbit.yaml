@@ -95,6 +95,25 @@ reviews:
   # 변경된 파일 요약은 켬 (빠른 개요, =기본값 true, 정책 명시)
   changed_files_summary: true
 
+  # Walkthrough 노이즈 제거
+  # - sequence_diagrams: 시퀀스 다이어그램 (이 프로젝트 규모에서 부가 가치 미미)
+  # - estimate_code_review_effort: "~10 minutes" 식 추정 (PR마다 노이즈)
+  # - in_progress_fortune: 리뷰 진행 중 운전 메시지
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  in_progress_fortune: false
+
+  # Finishing Touches — 수동·코드 생성형 토글을 끈다
+  # (YAML/문서 위주 변경이 많고 테스트 인프라가 없는 현재 단계에서는
+  #  CodeRabbit의 유닛테스트/docstrings 자동 생성 제안이 노이즈)
+  finishing_touches:
+    unit_tests:
+      enabled: false
+    docstrings:
+      enabled: false
+    simplify:
+      enabled: false
+
 # CodeRabbit 채팅: @멘션 없이 코멘트 스레드에 자동 응답 (언어는 최상위 language: ko-KR을 따름)
 chat:
   auto_reply: true
