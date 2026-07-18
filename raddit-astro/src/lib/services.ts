@@ -59,8 +59,8 @@ export async function getData(
     });
     // 표시 대상(필터 후)에만 호가잔량 비율 부착 — 배치(v7/quote+crumb)
     await up.attachBidAskBatch(items);
-    // 섹터 필터용 — 캐시 미적중 종목만 실제 조회됨 (up.attachSectorsBatch 참고)
-    await up.attachSectorsBatch(items);
+    // 테마 필터용 — 큐레이션된 티커 매핑 기반, 네트워크 호출 없음 (up.attachThemes 참고)
+    up.attachThemes(items);
     return {
       generated_at: kstDateTime(),
       filter: filterName,
