@@ -137,31 +137,51 @@ export default function Dashboard() {
   interface HypeRow {
     ticker: string; name: string | null;
     mentions: number; mentions_24h_ago: number | null;
-    delta: number; growth_pct: number; hype_score: number;
-    rank_24h_ago?: number; upvotes: number;
+    baseline: number; delta: number; growth_pct: number; hype_score: number;
+    rank: number | null; rank_24h_ago: number | null;
+    upvotes: number;
     price: number | null; chg: number | null;
   }
   const [hypeRows, setHypeRows] = createSignal<HypeRow[]>([]);
   const [hypeErr, setHypeErr] = createSignal("");
   const [hypeAt, setHypeAt] = createSignal("");
+  const [hypeLoading, setHypeLoading] = createSignal(false);
+  let hypeSeq = 0;
+  let hypeAbort: AbortController | null = null;
 
   const loadHype = async () => {
+    const seq = ++hypeSeq;
+    if (hypeAbort) hypeAbort.abort();
+    hypeAbort = new AbortController();
+    setHypeLoading(true);
     try {
       const market = marketVal();
-      const res = await fetch(`/api/hype?market=${market}&filter=${encodeURIComponent(filterVal())}`);
+      const res = await fetch(
+        `/api/hype?market=${market}&filter=${encodeURIComponent(filterVal())}`,
+        { signal: AbortSignal.timeout(15000) },
+      );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
+      // 최신 요청 결과만 반영 — 뷰 이탈/필터 변경 후 늦게 도착한 응답 무시
+      if (seq !== hypeSeq) return;
       setHypeRows((d.items ?? []).map((r: any) => ({
         ticker: r.ticker, name: r.name ?? null,
-        mentions: r.mentions, mentions_24h_ago: r.mentions_24h_ago ?? null,
+        mentions: r.mentions,
+        mentions_24h_ago: r.mentions_24h_ago ?? null,
+        baseline: r.baseline ?? Math.max(r.mentions_24h_ago ?? 0, 5),
         delta: r.delta, growth_pct: r.growth_pct, hype_score: r.hype_score,
-        rank_24h_ago: r.rank_24h_ago, upvotes: r.upvotes,
+        rank: r.rank ?? null, rank_24h_ago: r.rank_24h_ago ?? null,
+        upvotes: r.upvotes,
         price: r.quote?.price ?? null, chg: r.quote?.day_change_pct ?? null,
       })));
       setHypeAt(d.generated_at ?? "");
       setHypeErr("");
-    } catch {
+    } catch (err: any) {
+      if (seq !== hypeSeq) return;
+      if (err?.name === "AbortError" || err?.name === "TimeoutError") return;
       setHypeErr("Hype 데이터를 불러오지 못했습니다");
+    } finally {
+      if (seq === hypeSeq) setHypeLoading(false);
     }
   };
 
@@ -170,7 +190,10 @@ export default function Dashboard() {
     if (viewMode() !== "hype") return;
     loadHype();
     const id = setInterval(loadHype, 120_000);
-    onCleanup(() => clearInterval(id));
+    onCleanup(() => {
+      clearInterval(id);
+      if (hypeAbort) hypeAbort.abort();
+    });
   });
 
   // 상세 모달
@@ -889,7 +912,7 @@ export default function Dashboard() {
   onMount(() => {
     try {
       const saved = localStorage.getItem("raddit-view");
-      if (saved === "grid" || saved === "alerts") setViewMode(saved);
+      if (saved === "grid" || saved === "alerts" || saved === "hype") setViewMode(saved);
     } catch {}
     load();
     fetch("/api/version").then(r => r.json()).then(d => { if (d.version) setVersion(`v${d.version}`); }).catch(() => {});
@@ -1210,10 +1233,14 @@ export default function Dashboard() {
               <tbody>
                 <Show when={hypeRows().length} fallback={
                   <tr><td class="empty" colspan="10">
-                    {hypeErr() || "평소 대비 급증한 종목이 없습니다"}
+                    {hypeErr() || (hypeLoading() ? "불러오는 중…" : "평소 대비 급증한 종목이 없습니다")}
                   </td></tr>
                 }>
                   <For each={hypeRows()}>{(h) => {
+                    // rank가 있고 rank_24h_ago도 있으면 순위변동 표시
+                    const rankMove = h.rank != null && h.rank_24h_ago != null
+                      ? h.rank_24h_ago - h.rank
+                      : null;
                     return (
                       <tr tabindex="0"
                         onClick={() => openDetail(h.ticker)}
@@ -1222,10 +1249,14 @@ export default function Dashboard() {
                         <td><strong>{h.hype_score.toFixed(1)}</strong></td>
                         <td class="left"><span class="tk">{h.ticker}</span><br /><span class="name">{h.name || ""}</span></td>
                         <td>{h.mentions}</td>
-                        <td class="dim">{h.mentions_24h_ago ?? "-"}</td>
+                        <td class="dim">{h.baseline}</td>
                         <td><span class="pill up">+{h.delta}</span></td>
                         <td><span class="pill up">+{h.growth_pct.toFixed(0)}%</span></td>
-                        <td class="dim">{h.rank_24h_ago ? `#${h.rank_24h_ago}` : "NEW"}</td>
+                        <td>{h.rank != null && h.rank_24h_ago != null
+                          ? <span class={`pill ${rankMove! > 0 ? "up" : rankMove! < 0 ? "down" : "flat"}`}>
+                              {rankMove! > 0 ? "▲" + rankMove! : rankMove! < 0 ? "▼" + (-rankMove!) : "—"}
+                            </span>
+                          : h.rank_24h_ago == null ? <span class="pill new">NEW</span> : "-"}</td>
                         <td class="dim">{h.upvotes}</td>
                         <td>{h.price != null ? fmtPrice(h.price) : "-"}</td>
                         <td>{h.chg != null
