@@ -151,6 +151,16 @@ export default function Dashboard() {
   const [fund, setFund] = createSignal<{cik:string|null; filings:{form:string;date:string;docDesc:string|null;url:string}[]; financials:any|null} | null>(null);
   const [fundLoading, setFundLoading] = createSignal(false);
   const [fundError, setFundError] = createSignal("");
+  // 공매도 (#76) — /api/short (Yahoo 격주 잔고 + FINRA 전일 거래 비중)
+  interface ShortData {
+    interest: { shares_short: number | null; shares_short_prior: number | null;
+      short_ratio: number | null; short_pct_float: number | null;
+      date_short_interest: number | null } | null;
+    daily: { date: string; short_vol_pct: number } | null;
+    error: string | null;
+  }
+  const [shortD, setShortD] = createSignal<ShortData | null>(null);
+  const [shortLoading, setShortLoading] = createSignal(false);
   const [stSent, setStSent] = createSignal<{bullish_pct:number|null; messages:{body:string;username:string;ts:number|null;sentiment:string|null}[]; total:number; tagged:number} | null>(null);
   const [stEmpty, setStEmpty] = createSignal("");
   const [stEnabled, setStEnabled] = createSignal(false);
@@ -546,6 +556,7 @@ export default function Dashboard() {
     loadDetail();
     loadPosts(ticker);
     loadFundamentals(ticker);
+    loadShort(ticker);
   }
 
   function closeDetail() {
@@ -648,6 +659,39 @@ export default function Dashboard() {
       if (dlgTicker() === ticker) setFundLoading(false);
     }
   }
+
+  // ── 공매도 현황 ── loadFundamentals 와 동일 패턴. 실패해도 다른 패널 영향 없음.
+  async function loadShort(ticker: string) {
+    setShortD(null); setShortLoading(true);
+    try {
+      const res = await fetch(`/api/short?ticker=${encodeURIComponent(ticker)}`);
+      const data = await res.json();
+      if (dlgTicker() !== ticker) return;
+      if (!res.ok) throw new Error(data.error || res.status);
+      setShortD(data);
+    } catch {
+      if (dlgTicker() !== ticker) return;
+      setShortD({ interest: null, daily: null, error: "불러오기 실패" });
+    } finally {
+      if (dlgTicker() === ticker) setShortLoading(false);
+    }
+  }
+
+  /** 잔고 보고 기준일 epoch sec → "MM/DD" (UTC — Yahoo 가 자정 UTC 로 준다) */
+  const siAsOf = () => {
+    const sec = shortD()?.interest?.date_short_interest;
+    if (sec == null) return null;
+    const d = new Date(sec * 1000);
+    return `${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}`;
+  };
+  /** 전월 대비 잔고 증감 화살표 — 비교 불가면 빈 문자열 */
+  const siTrend = () => {
+    const si = shortD()?.interest;
+    if (!si || si.shares_short == null || si.shares_short_prior == null) return "";
+    return si.shares_short > si.shares_short_prior ? " ▲" : si.shares_short < si.shares_short_prior ? " ▼" : "";
+  };
+  /** FINRA 파일 날짜 "YYYYMMDD" → "MM/DD" */
+  const finraMMDD = (d: string) => `${d.slice(4, 6)}/${d.slice(6, 8)}`;
 
   // ── 검색 ──
   async function runSearch(q: string) {
@@ -1123,6 +1167,29 @@ export default function Dashboard() {
               </li>
             )}</For>
           </ul>
+          <h3 class="dlg-sub">공매도 <span class="dlg-note">잔고: 격주 보고(~2주 지연) · 비중: 전일</span></h3>
+          <Show when={shortLoading()}><p class="dlg-status">공매도 데이터 불러오는 중…</p></Show>
+          <Show when={!shortLoading() && shortD()}>
+            <Show when={shortD()!.interest || shortD()!.daily}
+              fallback={<p class="dlg-status">공매도 데이터 불러오기 실패</p>}>
+              <div class="ind-grid">
+                <div class="ind">
+                  <div class="label">공매도 잔고 / 유통주식{siAsOf() ? ` (기준 ${siAsOf()})` : ""}</div>
+                  <div class="value">{shortD()!.interest?.short_pct_float != null
+                    ? `${shortD()!.interest!.short_pct_float!.toFixed(1)}%${siTrend()}` : "-"}</div>
+                </div>
+                <div class="ind">
+                  <div class="label">숏 커버 소요일</div>
+                  <div class="value">{shortD()!.interest?.short_ratio != null
+                    ? `${shortD()!.interest!.short_ratio!.toFixed(1)}일` : "-"}</div>
+                </div>
+                <div class="ind">
+                  <div class="label">전일 공매도 거래 비중{shortD()!.daily ? ` (${finraMMDD(shortD()!.daily!.date)})` : ""}</div>
+                  <div class="value">{shortD()!.daily ? `${shortD()!.daily!.short_vol_pct.toFixed(1)}%` : "-"}</div>
+                </div>
+              </div>
+            </Show>
+          </Show>
           <h3 class="dlg-sub">레딧 게시물 (최근 1개월)</h3>
           <ul class="post-list">
             <Show when={redditPosts().length} fallback={<li class="post-empty">{redditEmpty()}</li>}>
