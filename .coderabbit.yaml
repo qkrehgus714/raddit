@@ -80,7 +80,7 @@ reviews:
         - 업스트림 응답(RSS XML) 스키마 변경에 대한 방어 코드 점검.
         - 시크릿은 환경변수(RPC_KEY 등)에서만. 하드코딩 금지.
     # GitHub Actions 워크플로우
-    - path: ".github/workflows/**"
+    - path: ".github/workflows/**/*.{yml,yaml}"
       instructions: |
         Railway 배포 워크플로우입니다.
         - `permissions:` 블록을 최소 권한으로 명시.
