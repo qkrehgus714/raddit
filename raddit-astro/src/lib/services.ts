@@ -14,6 +14,8 @@ const dailyCache = new TtlCache<up.ChartData>(600_000, 600_000);
 const postsCache = new TtlCache<PostsPayload>(600_000, 300_000);
 const searchCache = new TtlCache<SearchPayload>(600_000, 600_000);
 const fundamentalsCache = new TtlCache<FundamentalsPayload>(600_000, 600_000);
+// Hype (#95) — /api/data 의 결과를 변환하므로 동일 TTL 유지
+const hypeCache = new TtlCache<HypePayload>(120_000, 240_000);
 // StockTwits 공개 엔드포인트가 Cloudflare JS 챌린지(403) 로 서버사이드 차단 —
 // 소스 결정(#40/#56) 전까지 dormant. STOCKTWITS_ENABLED=1 시에만 호출·노출.
 const ST_ENABLED = process.env.STOCKTWITS_ENABLED === "1";
@@ -33,11 +35,11 @@ export interface DataPayload {
 }
 
 export async function getData(
-  filterName: string, maxPrice: number, minMentions: number,
+  filterName: string, maxPrice: number, minMentions: number, market: "stocks" | "crypto" = "stocks",
 ): Promise<DataPayload> {
-  const key = `${filterName}|${maxPrice}|${minMentions}`;
+  const key = `${market}|${filterName}|${maxPrice}|${minMentions}`;
   return dataCache.getOrCompute(key, async () => {
-    const all = (await up.fetchMentions(filterName)).filter(it => it.mentions >= minMentions);
+    const all = (await up.fetchMentions(filterName, market)).filter(it => it.mentions >= minMentions);
     // 전수 batch 가격조회 (상위 N slice 제거 — 페니주식이 멘션 하위권에 묻혀 누락되는 문제 방지)
     await up.attachQuotesBatch(all);
     // Yahoo 대량 실패(429 등) 시 빈 결과가 캐시를 덮어쓰는 것을 방지 — 누락률이 비정상적으로
@@ -48,23 +50,126 @@ export async function getData(
         throw new Error(`시세 조회 대량 실패 (quote ${withQuote}/${all.length}) — Yahoo 레이트리밋 의심`);
       }
     }
-    const items = all.filter(it => {
-      if (!it.quote || it.quote.price == null) return false;
-      if (maxPrice > 0) {
-        if (it.quote.price >= maxPrice) return false;
-        // 페니모드: 실제 주식(EQUITY)만 — 레버리지 ETF(SOXS·MSOS 등) 노이즈 제외
-        if (it.quote.type && it.quote.type !== "EQUITY") return false;
-      }
-      return true;
-    });
-    // 표시 대상(필터 후)에만 호가잔량 비율 부착 — 배치(v7/quote+crumb)
-    await up.attachBidAskBatch(items);
+    // 크립토는 페니주식 가격 상한·EQUITY 타입 개념이 없음 — 시세 조회 성공 여부만 확인
+    const items = market === "crypto"
+      ? all.filter(it => it.quote && it.quote.price != null)
+      : all.filter(it => {
+        if (!it.quote || it.quote.price == null) return false;
+        if (maxPrice > 0) {
+          if (it.quote.price >= maxPrice) return false;
+          // 페니모드: 실제 주식(EQUITY)만 — 레버리지 ETF(SOXS·MSOS 등) 노이즈 제외
+          if (it.quote.type && it.quote.type !== "EQUITY") return false;
+        }
+        return true;
+      });
+    if (market === "stocks") {
+      // 표시 대상(필터 후)에만 호가잔량 비율 부착 — 배치(v7/quote+crumb)
+      await up.attachBidAskBatch(items);
+      // 테마 필터용 — 큐레이션된 티커 매핑 기반, 네트워크 호출 없음 (up.attachThemes 참고)
+      up.attachThemes(items);
+    }
     return {
       generated_at: kstDateTime(),
       filter: filterName,
       max_price: maxPrice,
       scanned: all.length,
       items,
+    };
+  });
+}
+
+// ── Hype (#95) ──
+// 평소 언급량 대비 최근 급증 강도. 절대 언급량만으로 SPY·BTC 가 상단을
+// 독점하지 않도록 종목별 기준선(mentions_24h_ago) 대비 증가율·증가량을 핵심으로.
+export interface HypeItem {
+  ticker: string;
+  name?: string;
+  rank: number;                // 현재 ApeWisdom 순위 (fetchMentions가 정렬한 순위)
+  rank_24h_ago: number | null;
+  mentions: number;            // 현재 집계 구간 언급 수
+  mentions_24h_ago: number | null;  // 원본 평소 기준선
+  baseline: number;            // 점수 계산에 사용된 기준선 (max(mentions_24h_ago, HYPE_MIN_BASELINE))
+  delta: number;               // 증가량 = mentions - baseline
+  growth_pct: number;          // 증가율 = delta / baseline * 100
+  hype_score: number;          // delta * (1 + growth_pct/100) — 절대량·비율 동시 반영
+  upvotes: number;
+  quote?: up.Quote | null;
+}
+
+export interface HypePayload {
+  generated_at: string;
+  filter: string;
+  market: "stocks" | "crypto";
+  scanned: number;
+  items: HypeItem[];
+}
+
+// 최소 기준선 — 소수 언급(mentions_24h_ago = 1~2)이 ±1 변동으로 폭발적 증가율을
+// 만드는 노이즈를 억제. ApeWisdom 집계 구간(수시간) 특성상 5 정도가 의미 있는
+// 급등과 무작위 변동을 가르는 임계값.
+const HYPE_MIN_BASELINE = 5;
+
+export async function getHype(
+  filterName: string, market: "stocks" | "crypto",
+): Promise<HypePayload> {
+  const key = `${market}|${filterName}`;
+  return hypeCache.getOrCompute(key, async () => {
+    // /api/data 와 동일 원천(ApeWisdom) — fetchMentions가 mentions 내림차순 정렬.
+    const all = await up.fetchMentions(filterName, market);
+    // rank는 현재 mentions 순위 — fetchMentions 결과 인덱스 기반
+    const ranked = new Map(all.map((it, i) => [it.ticker, i + 1]));
+    const scored: HypeItem[] = all
+      .filter(it => it.mentions >= 2) // /api/data 기본값과 동일 (노이즈 1회 언급 제거)
+      .map(it => {
+        const baseline = Math.max(it.mentions_24h_ago ?? 0, HYPE_MIN_BASELINE);
+        const delta = it.mentions - baseline;
+        const growth_pct = (delta / baseline) * 100;
+        // 급증(delta>0)에만 가중치 부여 — 감소 종목은 score 0.
+        // score = delta * (1 + growth_pct/100)
+        //   → delta 5/growth 100% = 10
+        //   → delta 50/growth 500% = 300
+        // 절대량과 비율을 동시에 반영: 소수 급등(절대량 작음)은 낮고,
+        // 대형 종목의 큰 절대 증가(비율 작음)도 낮음.
+        const hype_score = delta > 0 ? delta * (1 + growth_pct / 100) : 0;
+        return {
+          ticker: it.ticker,
+          name: it.name,
+          rank: ranked.get(it.ticker) ?? 0,
+          rank_24h_ago: it.rank_24h_ago ?? null,
+          mentions: it.mentions,
+          mentions_24h_ago: it.mentions_24h_ago ?? null,
+          baseline,
+          delta,
+          growth_pct,
+          hype_score,
+          upvotes: it.upvotes,
+          quote: it.quote ?? null,
+        };
+      })
+      .filter(it => it.hype_score > 0)
+      .sort((a, b) => b.hype_score - a.hype_score)
+      .slice(0, 50);
+    // 상위 50개에만 시세 보강 — 언급 원본(quote 없음)에서는 현재가·등락이 비어 있으므로
+    // 기존 attachQuotesBatch 경로를 적용해 Hype 표의 가격·등락 칸을 채운다.
+    const toEnrich = scored.filter(it => !it.quote);
+    if (toEnrich.length) {
+      // attachQuotesBatch는 MentionItem[]을 받으므로 최소 필수 필드만 매핑
+      const tmp: up.MentionItem[] = toEnrich.map(it => ({
+        rank: it.rank, ticker: it.ticker, name: it.name,
+        mentions: it.mentions, upvotes: it.upvotes,
+      }));
+      await up.attachQuotesBatch(tmp);
+      const quoteMap = new Map(tmp.map(t => [t.ticker, t.quote ?? null]));
+      for (const it of scored) {
+        if (!it.quote && quoteMap.has(it.ticker)) it.quote = quoteMap.get(it.ticker);
+      }
+    }
+    return {
+      generated_at: kstDateTime(),
+      filter: filterName,
+      market,
+      scanned: all.length,
+      items: scored,
     };
   });
 }
@@ -249,4 +354,68 @@ export async function getSearch(query: string): Promise<SearchPayload> {
     query,
     items: await up.searchSymbols(query),
   }));
+}
+
+// ── 공매도 현황 (#76) ──
+
+const shortCache = new TtlCache<ShortPayload>(12 * 3600_000, 3600_000);
+
+// FINRA 전 종목 맵 — getShortData 와 /api/alerts 라우트가 공유하는 모듈 레벨 캐시.
+// 하루 1회 갱신이면 충분(전일 파일). 실패는 null 캐시 후 60초 뒤 재시도.
+let finraCache: { at: number; data: up.FinraShortVolume | null } | null = null;
+let finraInflight: Promise<up.FinraShortVolume | null> | null = null;
+const FINRA_TTL_OK_MS = 24 * 3600_000;
+const FINRA_TTL_STALE_MS = 3600_000;
+const FINRA_TTL_ERR_MS = 60_000;
+
+/** 캐시 유효기간 — 최신 후보 파일이면 24h, 옛 파일이면(당일분 게시 전 로드) 1h 뒤 재확인. */
+function finraTtlMs(): number {
+  if (!finraCache?.data) return FINRA_TTL_ERR_MS;
+  return finraCache.data.date === up.finraDateCandidates()[0] ? FINRA_TTL_OK_MS : FINRA_TTL_STALE_MS;
+}
+
+export async function getFinraShortMap(): Promise<up.FinraShortVolume | null> {
+  if (finraCache && Date.now() - finraCache.at < finraTtlMs()) return finraCache.data;
+  if (!finraInflight) {
+    finraInflight = up.fetchFinraShortVolume()
+      .catch(() => null) // 장애도 null — 호출부는 결손 처리, 60초 뒤 재시도
+      .then(data => { finraCache = { at: Date.now(), data }; return data; })
+      .finally(() => { finraInflight = null; });
+  }
+  return finraInflight;
+}
+
+/** 캐시된 FINRA 맵 동기 조회 — 로드를 트리거하지 않는다 (/api/alerts 무비용 lookup용). */
+export function peekFinraShortMap(): up.FinraShortVolume | null {
+  return finraCache?.data ?? null;
+}
+
+export interface ShortPayload {
+  ticker: string;
+  interest: up.ShortInterest | null;                      // v1 — Yahoo, 격주
+  daily: { date: string; short_vol_pct: number } | null;  // v2 — FINRA, 전일
+  error: string | null;                                   // 두 소스 모두 실패 시에만
+  generated_at: string;
+}
+
+/** 공매도 잔고 + 일별 비중 — 한쪽 실패해도 나머지는 표시 (getFundamentals 식 격리). */
+export async function getShortData(ticker: string): Promise<ShortPayload> {
+  return shortCache.getOrCompute(ticker, async () => {
+    const [si, finra] = await Promise.allSettled([up.fetchShortInterest(ticker), getFinraShortMap()]);
+    const interest = si.status === "fulfilled" ? si.value : null;
+    const finraData = finra.status === "fulfilled" ? finra.value : null;
+    const row = finraData?.map.get(ticker.toUpperCase());
+    const daily = finraData && row ? { date: finraData.date, short_vol_pct: row.short_vol_pct } : null;
+    const bothFailed = si.status === "rejected" && finraData == null;
+    return {
+      ticker,
+      interest,
+      daily,
+      error: bothFailed ? (si.status === "rejected" ? reason(si) : "공매도 데이터 없음") : null,
+      generated_at: kstTime(),
+    };
+  }, {
+    // 격주 데이터라 성공은 길게(12h), 실패는 짧게 캐시해 곧 재시도
+    ttlFor: v => (v.error ? 60_000 : 12 * 3600_000),
+  });
 }

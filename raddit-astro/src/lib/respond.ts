@@ -5,7 +5,11 @@
 /** CDN 캐시 헤더와 함께 JSON 응답. */
 export function jsonCached(payload: unknown, sMaxage: number, swr: number): Response {
   return Response.json(payload, {
-    headers: { "Cache-Control": `public, max-age=0, s-maxage=${sMaxage}, stale-while-revalidate=${swr}` },
+    status: 200,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": `public, max-age=0, s-maxage=${sMaxage}, stale-while-revalidate=${swr}`,
+    },
   });
 }
 

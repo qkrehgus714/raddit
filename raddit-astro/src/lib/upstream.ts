@@ -71,9 +71,18 @@ export interface MentionItem {
   quote?: Quote | null;
   buy_ratio_pct?: number | null;
   bidAskTotal?: number | null;
+  themes?: string[];
 }
 
-export async function fetchMentions(filter: string): Promise<MentionItem[]> {
+/**
+ * ApeWisdom 크립토 필터는 티커를 "BTC.X" 형식으로 준다. Yahoo Finance 크립토
+ * 심볼("BTC-USD")로 변환해야 차트·시세 조회가 그대로 재사용된다 (#93).
+ */
+function apeWisdomCryptoTicker(raw: string): string {
+  return raw.replace(/\.X$/i, "-USD");
+}
+
+export async function fetchMentions(filter: string, market: "stocks" | "crypto" = "stocks"): Promise<MentionItem[]> {
   const first = await getJson(APEWISDOM_URL(filter, 1));
   let results: MentionItem[] = first.results ?? [];
   const pages = Math.min(Number(first.pages) || 1, 30);
@@ -81,6 +90,9 @@ export async function fetchMentions(filter: string): Promise<MentionItem[]> {
     Array.from({ length: pages - 1 }, (_, i) => getJson(APEWISDOM_URL(filter, i + 2))),
   );
   for (const r of rest) results = results.concat(r.results ?? []);
+  if (market === "crypto") {
+    for (const r of results) r.ticker = apeWisdomCryptoTicker(r.ticker);
+  }
   results.sort((a, b) => b.mentions - a.mentions);
   return results;
 }
@@ -228,6 +240,55 @@ export async function attachBidAskBatch(items: MentionItem[], chunkSize = 40, co
   await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
 }
 
+// ── 테마 태그 (#85, #87, #89) ──
+// GICS 섹터(#81)는 "AI"처럼 여러 산업에 걸친 테마를 표현할 수 없어, 큐레이션된
+// 티커→테마 매핑으로 대체한다. 네트워크 호출이 없어 즉시 태깅되며, 한 티커가
+// 여러 테마에 속할 수 있다. 신규/편입 종목은 목록을 사람이 직접 갱신해야 한다.
+const THEME_TICKERS: Record<string, string[]> = {
+  "반도체": ["NVDA","AMD","INTC","TSM","AVGO","QCOM","MU","TXN","ARM","ASML","AMAT","LRCX","KLAC","MRVL","ON","NXPI","STM","SMCI","WOLF",
+    "AAOI","AMKR","MRAM","SNDK","SNPS","TER","SOXL","SOXS","SOXX","SMH"],
+  "AI": ["NVDA","MSFT","GOOGL","GOOG","META","AMZN","PLTR","AI","SMCI","AVGO","AMD","ORCL","CRM","IBM","SNOW","NOW","ARM",
+    "CRWV","NBIS","IREN","APLD","DELL"],
+  "우주": ["RKLB","LUNR","ASTS","SPCE","RDW","ASTR","LMT","BA","NOC","RTX","MAXR","IRDM","VSAT","GSAT",
+    "SPCX","PL"],
+  "바이오/제약": ["JNJ","LLY","PFE","RMD","ISRG","COO","SLS","DRTS"],
+  "에너지/자원": ["AM","AR","BE","CVX","DTE","ES","ET","EU","FCEL","GLP","HP","HBM","AGI","OR","MP","NEE","NEXT","OXY",
+    "PUMP","SMR","SO","GLD","SLV","TE","UUUU","USO","XOM","XLE","TAN","OKLO","BWXT","DC","GEV","BATL"],
+  "전기차/배터리": ["TSLA","RIVN","GM","QS","VC","LOT"],
+  "대마초": ["TLRY","CGC","ACB","SNDL","CRON","GRWG","CURLF","TCNNF","GTBIF"],
+  "금융": ["HOOD","FCF","IBKR","MS","GS","MA","PYPL","TRV","ALL","GL","CIA","SOFI","MC","HSBC","BULL"],
+  "암호화폐": ["MSTR","MARA","ANY"],
+  "사이버보안": ["CRWD","PANW","NET","BB"],
+  "양자컴퓨팅": ["RGTI","IONQ"],
+  "로봇/드론": ["RR","ONDS","RCAT","AVAV"],
+  "미디어/엔터": ["NFLX","RDDT","DJT","AMC","SNAP","NYT","IMAX","OUT"],
+  "소비재/유통": ["WEN","KO","WMT","PG","GME","GO","DPZ","COST","YUM","CASY","MO","AS"],
+  "모빌리티/여행": ["UBER","CVNA","GRAB","AAL","UP","BC"],
+  "부동산": ["SMA","HR","OPEN","FOR"],
+  "헬스케어서비스": ["UNH","WAY","NRC"],
+  "기술/소프트웨어": ["ADBE","SAP","AAPL","UI","NOK","TDS","API","LINK","STX","WDC","YOU","IT","AZ"],
+  "산업재/소재": ["CAT","GE","CC","DOW","IP","OI","SLND"],
+  "중국기업": ["WB","IQ","BABA","JD","LOT"],
+  "지수/섹터 ETF": ["SPY","QQQ","QQQM","VOO","VTI","VT","VXUS","IWM","TQQQ","SCHD","AVUV","XLK","VGT","WANT","JUST","DON"],
+  "채권/현금성 ETF": ["BND","SGOV","IG"],
+  "국가 ETF": ["KORU","EWY","YINN"],
+};
+const TICKER_THEMES = new Map<string, string[]>();
+for (const [theme, tickers] of Object.entries(THEME_TICKERS)) {
+  for (const ticker of tickers) {
+    const arr = TICKER_THEMES.get(ticker);
+    if (arr) arr.push(theme);
+    else TICKER_THEMES.set(ticker, [theme]);
+  }
+}
+
+/** items에 테마 태그를 채운다. 매핑에 없는 티커는 빈 배열. */
+export function attachThemes(items: MentionItem[]): void {
+  for (const it of items) {
+    it.themes = TICKER_THEMES.get(it.ticker.toUpperCase()) ?? [];
+  }
+}
+
 // ── 급등 탐지용 배치 시세 (#74) ──
 
 export interface SpikeQuote {
@@ -296,6 +357,120 @@ export async function fetchSpikeQuotes(
     }
   }
   return out;
+}
+
+// ── 공매도 잔고 (#76) — Yahoo v10 quoteSummary, FINRA 격주 보고 기반(~2주 지연) ──
+
+const YAHOO_QUOTESUMMARY_URL = (ticker: string) =>
+  `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics`;
+
+export interface ShortInterest {
+  shares_short: number | null;        // sharesShort.raw
+  shares_short_prior: number | null;  // sharesShortPriorMonth.raw (전월)
+  short_ratio: number | null;         // shortRatio.raw (days to cover)
+  short_pct_float: number | null;     // shortPercentOfFloat.raw × 100 (%)
+  short_pct_out: number | null;       // sharesPercentSharesOut.raw × 100 (%) — float 왜곡 보정용 (#89)
+  date_short_interest: number | null; // dateShortInterest.raw (epoch sec, 보고 기준일)
+}
+
+/** v10 quoteSummary 응답 → 공매도 필드만. 모든 필드 결손 허용(null). */
+export function parseShortInterest(raw: any): ShortInterest {
+  const ks = raw?.quoteSummary?.result?.[0]?.defaultKeyStatistics ?? {};
+  const pctFloat = ks.shortPercentOfFloat?.raw;
+  const pctOut = ks.sharesPercentSharesOut?.raw;
+  return {
+    shares_short: ks.sharesShort?.raw ?? null,
+    shares_short_prior: ks.sharesShortPriorMonth?.raw ?? null,
+    short_ratio: ks.shortRatio?.raw ?? null,
+    short_pct_float: pctFloat != null ? round4(pctFloat * 100) : null,
+    short_pct_out: pctOut != null ? round4(pctOut * 100) : null,
+    date_short_interest: ks.dateShortInterest?.raw ?? null,
+  };
+}
+
+/**
+ * 공매도 잔고 조회 (crumb 인증 — fetchBidAsk 패턴). 401/403 시 재발급 후 1회 재시도.
+ * fetchBidAsk와 달리 실패 시 throw — getShortData 의 allSettled 가 error 로 격리한다.
+ */
+export async function fetchShortInterest(ticker: string, retry = true): Promise<ShortInterest> {
+  const { cookie, crumb } = await getYahooAuth();
+  const url = `${YAHOO_QUOTESUMMARY_URL(ticker)}&crumb=${encodeURIComponent(crumb)}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": BROWSER_UA, Cookie: cookie },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    if (retry && (res.status === 401 || res.status === 403)) {
+      yahooAuth = null;
+      return fetchShortInterest(ticker, false);
+    }
+    throw new Error(`Yahoo quoteSummary 응답 ${res.status}`);
+  }
+  return parseShortInterest(await res.json());
+}
+
+// ── FINRA Reg SHO 일별 공매도 거래 비중 (#76 v2) — 무인증, 전 종목 단일 파일 ──
+
+const FINRA_SHVOL_URL = (yyyymmdd: string) =>
+  `https://cdn.finra.org/equity/regsho/daily/CNMSshvol${yyyymmdd}.txt`;
+
+/**
+ * 시도할 파일 날짜 후보 — ET 기준 당일부터 주말을 건너뛰며 최대 max개 (YYYYMMDD).
+ * 당일 파일은 장 마감 후 저녁(~18시 ET) 게시 — 아직 없으면 404로 자연히 전일로 소급.
+ */
+export function finraDateCandidates(now: Date = new Date(), max = 5): string[] {
+  const etToday = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(now);
+  const d = new Date(`${etToday}T00:00:00Z`);
+  const out: string[] = [];
+  while (out.length < max) {
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) out.push(d.toISOString().slice(0, 10).replace(/-/g, ""));
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  return out;
+}
+
+/**
+ * 파이프 구분 파일 파싱: Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market.
+ * 헤더·형식 불일치·TotalVolume 0 행은 제외. short_vol_pct = Short/Total × 100.
+ */
+export function parseFinraShortVolume(
+  text: string,
+): Map<string, { short_vol_pct: number; total_volume: number }> {
+  const map = new Map<string, { short_vol_pct: number; total_volume: number }>();
+  for (const line of text.split(/\r?\n/)) {
+    const parts = line.split("|");
+    if (parts.length < 5) continue;
+    const symbol = parts[1];
+    const sv = Number(parts[2]);
+    const tv = Number(parts[4]);
+    if (!symbol || symbol === "Symbol" || !Number.isFinite(sv) || !Number.isFinite(tv) || tv <= 0) continue;
+    map.set(symbol, { short_vol_pct: round4((sv / tv) * 100), total_volume: tv });
+  }
+  return map;
+}
+
+export interface FinraShortVolume {
+  date: string; // YYYYMMDD — 실제로 로드된 파일 날짜
+  map: Map<string, { short_vol_pct: number; total_volume: number }>;
+}
+
+/**
+ * 가장 최근 영업일 파일을 내려받아 파싱. 404(주말·휴일)는 다음 후보로 넘어가고
+ * 5영업일 내 파일이 없으면 null. 그 외 HTTP 오류·네트워크 오류는 throw.
+ */
+export async function fetchFinraShortVolume(now: Date = new Date()): Promise<FinraShortVolume | null> {
+  for (const date of finraDateCandidates(now)) {
+    const res = await fetch(FINRA_SHVOL_URL(date), {
+      headers: { "User-Agent": BROWSER_UA },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.status === 404) continue;
+    if (!res.ok) throw new Error(`FINRA Reg SHO 응답 ${res.status}`);
+    const map = parseFinraShortVolume(await res.text());
+    if (map.size) return { date, map };
+  }
+  return null;
 }
 
 export interface ChartData { meta: Record<string, any>; points: Point[]; }
@@ -367,7 +542,9 @@ export async function fetchRedditPosts(ticker: string, limit = 15): Promise<Redd
   if (!REDDIT_RPC_URL) {
     throw new Error("REDDIT_RPC_URL 이 설정되지 않음 (raddit-reddit 서비스 미구성)");
   }
-  const url = `${REDDIT_RPC_URL}/rpc/reddit-posts?ticker=${encodeURIComponent(ticker)}&limit=${limit}`;
+  // 크립토 티커("BTC-USD")는 검색어로는 원심볼("BTC")이 매칭이 더 잘 됨
+  const searchTicker = ticker.replace(/-USD$/, "");
+  const url = `${REDDIT_RPC_URL}/rpc/reddit-posts?ticker=${encodeURIComponent(searchTicker)}&limit=${limit}`;
   const headers: Record<string, string> = {};
   if (REDDIT_RPC_KEY) headers["X-RPC-Key"] = REDDIT_RPC_KEY;
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
@@ -387,7 +564,7 @@ export interface NewsItem {
 }
 
 export async function fetchNews(ticker: string): Promise<NewsItem[]> {
-  const data = await getJson(NEWS_SEARCH_URL(ticker));
+  const data = await getJson(NEWS_SEARCH_URL(ticker.replace(/-USD$/, "")));
   return (data.news ?? []).map((n: any) => ({
     title: n.title,
     publisher: n.publisher,
