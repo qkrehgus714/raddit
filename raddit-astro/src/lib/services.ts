@@ -423,3 +423,30 @@ export async function getShortData(ticker: string): Promise<ShortPayload> {
     ttlFor: v => (v.error ? 60_000 : 12 * 3600_000),
   });
 }
+
+// ── 내부자 매매 (#91) ──
+
+const insiderCache = new TtlCache<InsiderPayload>(12 * 3600_000, 3600_000);
+
+export interface InsiderPayload {
+  ticker: string;
+  activity: up.InsiderActivity | null;
+  transactions: up.InsiderTransaction[];
+  error: string | null;
+  generated_at: string;
+}
+
+/** 내부자 매매 6개월 요약 + 최근 거래 — getFundamentals 식 독립 캐시·장애 격리. */
+export async function getInsiderData(ticker: string): Promise<InsiderPayload> {
+  return insiderCache.getOrCompute(ticker, async () => {
+    try {
+      const { activity, transactions } = await up.fetchInsider(ticker);
+      return { ticker, activity, transactions, error: null, generated_at: kstTime() };
+    } catch (e: any) {
+      return { ticker, activity: null, transactions: [], error: e?.message ?? String(e), generated_at: kstTime() };
+    }
+  }, {
+    // 데이터 갱신이 잦지 않아 성공은 길게(12h), 실패는 짧게 캐시해 곧 재시도
+    ttlFor: v => (v.error ? 60_000 : 12 * 3600_000),
+  });
+}
