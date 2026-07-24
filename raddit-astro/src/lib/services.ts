@@ -50,9 +50,13 @@ export async function getData(
         throw new Error(`시세 조회 대량 실패 (quote ${withQuote}/${all.length}) — Yahoo 레이트리밋 의심`);
       }
     }
-    // 크립토는 페니주식 가격 상한·EQUITY 타입 개념이 없음 — 시세 조회 성공 여부만 확인
+    // 크립토는 EQUITY 타입 체크(레버리지 ETF 노이즈 제외용) 개념이 없음 — 가격 상한은 동일하게 적용
     const items = market === "crypto"
-      ? all.filter(it => it.quote && it.quote.price != null)
+      ? all.filter(it => {
+        if (!it.quote || it.quote.price == null) return false;
+        if (maxPrice > 0 && it.quote.price >= maxPrice) return false;
+        return true;
+      })
       : all.filter(it => {
         if (!it.quote || it.quote.price == null) return false;
         if (maxPrice > 0) {
@@ -63,11 +67,11 @@ export async function getData(
         return true;
       });
     if (market === "stocks") {
-      // 표시 대상(필터 후)에만 호가잔량 비율 부착 — 배치(v7/quote+crumb)
+      // 표시 대상(필터 후)에만 호가잔량 비율 부착 — 배치(v7/quote+crumb), 크립토엔 없는 개념
       await up.attachBidAskBatch(items);
-      // 테마 필터용 — 큐레이션된 티커 매핑 기반, 네트워크 호출 없음 (up.attachThemes 참고)
-      up.attachThemes(items);
     }
+    // 테마 필터용 — 큐레이션된 티커 매핑 기반, 네트워크 호출 없음 (up.attachThemes 참고). 주식/크립토 공통.
+    up.attachThemes(items);
     return {
       generated_at: kstDateTime(),
       filter: filterName,
