@@ -43,7 +43,15 @@ function fmtVol(v: number | null): string {
   if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
   return String(v);
 }
-function fmtPrice(v: number): string { return "$" + (Math.abs(v) < 1 ? v.toFixed(3) : v.toFixed(2)); }
+function fmtPrice(v: number): string {
+  const a = Math.abs(v);
+  // 초소액 밈코인(HYPE, MEX 등) 대응 — 고정 소수점 2~3자리로는 $0.000으로 뭉개져 표시되는 문제 방지
+  if (a === 0) return "$0.00";
+  if (a >= 1) return "$" + v.toFixed(2);
+  if (a >= 0.01) return "$" + v.toFixed(4);
+  if (a >= 0.0001) return "$" + v.toFixed(6);
+  return "$" + v.toFixed(8);
+}
 function fmtM(v: number | null | undefined): string {
   if (v == null) return "-";
   const sign = v < 0 ? "-" : "";
@@ -348,7 +356,8 @@ export default function Dashboard() {
     const priced = r.filter((x: Row) => x.chg != null);
     const topMover = priced.length ? priced.reduce((a: Row, b: Row) => (b.chg > a.chg ? b : a)) : null;
     const topClean = r.length ? r.reduce((a: Row, b: Row) => (b.mentions > a.mentions ? b : a)) : null;
-    return { scanned: scanned(), rowsLen: r.length, maxPrice: Number(priceVal()), topMover, topClean };
+    const maxPrice = Number(marketVal() === "crypto" ? cryptoPriceVal() : priceVal());
+    return { scanned: scanned(), rowsLen: r.length, maxPrice, topMover, topClean };
   });
 
   // ── 차트 (lightweight-charts) ──
@@ -1001,7 +1010,7 @@ export default function Dashboard() {
                 <div class="value" classList={{ up: mover().chg >= 0 }}>
                   <span class="ticker-mono">{mover().ticker}</span> {mover().chg >= 0 ? "+" : ""}{mover().chg.toFixed(1)}%
                 </div>
-                <div class="note">{mover().name || ""} · ${mover().price.toFixed(2)}</div>
+                <div class="note">{mover().name || ""} · {fmtPrice(mover().price)}</div>
               </>
             )}
           </Show>
@@ -1061,7 +1070,7 @@ export default function Dashboard() {
                     >
                       <td class="dim">{d.rank}</td>
                       <td class="left"><span class="tk">{d.ticker}</span><br /><span class="name">{d.name || ""}</span></td>
-                      <td>{d.price != null ? "$" + d.price.toFixed(2) : "-"}</td>
+                      <td>{d.price != null ? fmtPrice(d.price) : "-"}</td>
                       <td innerHTML={chgHtml}></td>
                       <td>{d.bidAskPct != null ? (
                         <div class="bidask-cell" classList={{ thin: (d.bidAskTotal ?? 0) < 100 }} title={(d.bidAskTotal ?? 0) < 100 ? "호가잔량 얕음 — 참고용" : `매수 ${d.bidAskPct!.toFixed(0)}% · 매도 ${(100 - d.bidAskPct!).toFixed(0)}%`}>

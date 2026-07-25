@@ -131,9 +131,13 @@ export async function attachQuotesBatch(items: MentionItem[], chunkSize = 20, co
           if (!meta) continue;
           const price = meta.regularMarketPrice;
           const prev = meta.chartPreviousClose ?? meta.previousClose;
+          // 거래가 끊긴 종목(특히 희박 유동성 크립토)은 마지막 체결가가 며칠~수년 전일 수 있어
+          // "오늘 등락률"로 계산하면 수만 %대 오류 수치가 나옴 — 최근 거래가 아니면 등락률 생략
+          const marketTime = meta.regularMarketTime;
+          const isStale = marketTime != null && (Date.now() / 1000 - marketTime) > 259200;
           c.quote = {
             price,
-            day_change_pct: prev ? ((price - prev) / prev) * 100 : null,
+            day_change_pct: prev && !isStale ? ((price - prev) / prev) * 100 : null,
             volume: meta.regularMarketVolume ?? null,
             type: meta.instrumentType ?? null,
             exchange: meta.exchangeName ?? null,
