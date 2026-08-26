@@ -10,3 +10,13 @@ raddit-astro/dist/
 raddit-astro/.astro/
 raddit-astro/node_modules/
 raddit-reddit/__pycache__/
+
+# 이력 저장소 (#112) — 로컬 SQLite 파일
+data/
+raddit-astro/data/
+
+# 루트 node_modules — raddit-astro/node_modules 만 막혀 있어 vitest 캐시가 새어나왔다
+node_modules/
+
+# skills-lock.json 으로 복원되는 vendored 스킬 (node_modules 와 같은 성격)
+.agents/
