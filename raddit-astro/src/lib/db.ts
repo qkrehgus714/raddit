@@ -8,12 +8,35 @@
  * 쓸 수 없으면 조용히 비활성화되고 raddit 본체는 정상 동작해야 한다. 그래서
  * 열기 실패는 예외가 아니라 null 이다.
  *
- * 의존성을 늘리지 않으려고 Node 내장 node:sqlite 를 쓴다 (Node 22.5+).
+ * 의존성을 늘리지 않으려고 Node 내장 node:sqlite 를 쓴다 (**Node 22.13+** — 22.5 에서
+ * 들어왔지만 22.13 전까지는 --experimental-sqlite 플래그가 필요했다).
  */
 
-import { DatabaseSync } from "node:sqlite";
+// 타입만 가져온다 — 컴파일 시 지워지므로 런타임에 node:sqlite 가 없어도 안전하다.
+import type { DatabaseSync } from "node:sqlite";
+import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+
+export interface SqliteModule {
+  DatabaseSync: new (path: string) => DatabaseSync;
+}
+
+/**
+ * node:sqlite 를 런타임에 불러온다. **없으면 null 이고 던지지 않는다.**
+ *
+ * 정적 `import { DatabaseSync } from "node:sqlite"` 를 쓰면 안 된다. 이 모듈은
+ * db.ts → history.ts → middleware.ts 로 이어지고 미들웨어는 모든 요청에서 돌기
+ * 때문에, 임포트가 실패하면 수집기만 꺼지는 게 아니라 **사이트 전체가 500** 이 된다.
+ * Node 22.13 미만에서는 --experimental-sqlite 없이 이 모듈을 부르면 실제로 던진다.
+ */
+export function loadSqlite(): SqliteModule | null {
+  try {
+    return createRequire(import.meta.url)("node:sqlite") as SqliteModule;
+  } catch {
+    return null;
+  }
+}
 
 const DEFAULT_PATH = "./data/raddit.db";
 
@@ -62,14 +85,29 @@ let db: DatabaseSync | null = null;
 /** 한 번 실패하면 기억한다 — 매 주기 재시도하며 로그를 채우지 않게. */
 let openFailed = false;
 
-/** 저장소 핸들. 열 수 없으면 null 을 돌려주고 던지지 않는다. */
-export function getDb(): DatabaseSync | null {
+/**
+ * 저장소 핸들. 열 수 없으면 null 을 돌려주고 던지지 않는다.
+ *
+ * loader 는 테스트가 "node:sqlite 가 없는 런타임"을 재현하려고 갈아끼운다.
+ */
+export function getDb(loader: () => SqliteModule | null = loadSqlite): DatabaseSync | null {
   if (db) return db;
   if (openFailed) return null;
+
+  const sqlite = loader();
+  if (!sqlite) {
+    openFailed = true;
+    console.warn(
+      "[history] node:sqlite 를 쓸 수 없어 이력 수집을 건너뜁니다. " +
+      "Node 22.13 이상이 필요합니다 (그 미만은 --experimental-sqlite 플래그 요구).",
+    );
+    return null;
+  }
+
   const path = process.env.RADDIT_DB_PATH || DEFAULT_PATH;
   try {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    const handle = new DatabaseSync(path);
+    const handle = new sqlite.DatabaseSync(path);
     // 수집이 도는 동안에도 읽기가 막히지 않게. :memory: 는 WAL 을 지원하지 않는다.
     if (path !== ":memory:") handle.exec("PRAGMA journal_mode = WAL");
     handle.exec(SCHEMA);
@@ -83,8 +121,8 @@ export function getDb(): DatabaseSync | null {
   }
 }
 
-export function isDbReady(): boolean {
-  return getDb() != null;
+export function isDbReady(loader: () => SqliteModule | null = loadSqlite): boolean {
+  return getDb(loader) != null;
 }
 
 /** 핸들을 닫고 상태를 초기화한다 (테스트 · 종료 시). */
