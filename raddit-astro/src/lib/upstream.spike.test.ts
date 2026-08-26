@@ -6,11 +6,13 @@ describe("parseSpikeQuote", () => {
     const q = parseSpikeQuote({
       marketState: "REGULAR", regularMarketPrice: 3.21, regularMarketVolume: 1_200_000,
       averageDailyVolume10Day: 800_000, shortName: "Acme Inc.",
-      preMarketPrice: 3.05, postMarketPrice: 3.3,
+      preMarketPrice: 3.05, postMarketPrice: 3.3, regularMarketChangePercent: 4.2,
+      bid: 3.20, ask: 3.22, bidSize: 500, askSize: 900,
     });
     expect(q).toEqual({
       price: 3.21, ext_price: null, volume: 1_200_000,
       avg_vol_10d: 800_000, market_state: "REGULAR", name: "Acme Inc.",
+      day_change_pct: 4.2, bid: 3.20, ask: 3.22, bid_size: 500, ask_size: 900,
     });
   });
 
@@ -29,7 +31,15 @@ describe("parseSpikeQuote", () => {
   it("필드 결손은 전부 null", () => {
     expect(parseSpikeQuote({})).toEqual({
       price: null, ext_price: null, volume: null,
-      avg_vol_10d: null, market_state: null, name: null,
+      avg_vol_10d: null, market_state: null, name: null, day_change_pct: null,
+      bid: null, ask: null, bid_size: null, ask_size: null,
     });
+  });
+
+  // #112 — 이력·백테스트에는 일간 등락률이 필요하다. 급등 판정의 15분 구간
+  // 변화율과는 다른 값이고, 같은 응답에 이미 들어 있어 추가 요청이 없다.
+  it("일간 등락률을 그대로 싣는다 (하락도 부호 보존)", () => {
+    expect(parseSpikeQuote({ regularMarketChangePercent: -8.1 }).day_change_pct).toBe(-8.1);
+    expect(parseSpikeQuote({ regularMarketChangePercent: 0 }).day_change_pct).toBe(0);
   });
 });

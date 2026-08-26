@@ -314,6 +314,16 @@ export interface SpikeQuote {
   avg_vol_10d: number | null;  // averageDailyVolume10Day
   market_state: string | null;
   name: string | null;
+  // 일간 등락률 (#112). 급등 판정의 15분 구간 변화율과는 다른 값이고,
+  // 이력·백테스트에는 일간이 필요하다. 같은 응답에 있어 추가 요청은 0.
+  day_change_pct: number | null;
+  // 호가 (#112). 페이퍼 트레이딩·백테스트의 체결 모델에 필요하다 — 현재가로 사고
+  // 팔았다고 가정하면 실재하지 않는 스프레드가 수익으로 잡힌다. 페니주는 그 폭이 크다.
+  // 호가는 소급해서 구할 수 없으므로 지금부터 같이 쌓아야 한다. 역시 같은 응답에 있다.
+  bid: number | null;
+  ask: number | null;
+  bid_size: number | null;
+  ask_size: number | null;
 }
 
 /** v7 quote 응답 1건 → 급등 감지에 필요한 필드만. 세션에 따라 유효한 장외가 선택. */
@@ -331,6 +341,11 @@ export function parseSpikeQuote(q: any): SpikeQuote {
     avg_vol_10d: q.averageDailyVolume10Day ?? null,
     market_state: state,
     name: q.shortName ?? q.longName ?? null,
+    day_change_pct: q.regularMarketChangePercent ?? null,
+    bid: q.bid ?? null,
+    ask: q.ask ?? null,
+    bid_size: q.bidSize ?? null,
+    ask_size: q.askSize ?? null,
   };
 }
 
