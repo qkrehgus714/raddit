@@ -20,3 +20,8 @@ node_modules/
 
 # skills-lock.json 으로 복원되는 vendored 스킬 (node_modules 와 같은 성격)
 .agents/
+
+# 로컬 환경설정 — 공개 저장소이므로 절대 커밋 금지
+.env
+.env.*
+!.env.example

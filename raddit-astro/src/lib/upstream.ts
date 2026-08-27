@@ -155,13 +155,28 @@ export interface BidAsk {
   buy_ratio_pct: number | null;
 }
 
-function parseBidAsk(q: any): BidAsk {
+/**
+ * 호가 가격을 읽는다. **0 이하는 가격이 아니라 "값 없음"이다.**
+ *
+ * 야후는 호가가 없을 때 0 을 준다 — 유동성이 없어서가 아니다. 실측(2026-08-27)에서
+ * JPM·MCD·SGOV 처럼 거래량이 수십만~천만 주인 종목도 정규장에 bid 나 ask 가 0 이었다.
+ * $0 매수호가는 존재할 수 없으므로 그대로 저장하면 백테스트 체결 모델이 **공짜로
+ * 샀다**고 계산하고 스프레드가 음수가 된다. 없는 값은 없다고 적는다.
+ *
+ * 잔량은 이 함수를 거치지 않는다. 잔량 0 은 "매수 잔량 없음"이라는 실재하는 상태이고,
+ * 매수 비중은 그 자체로 별개 신호이기 때문이다.
+ */
+function priceOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+export function parseBidAsk(q: any): BidAsk {
   const bidSize: number | null = q.bidSize ?? null;
   const askSize: number | null = q.askSize ?? null;
   const total = (bidSize ?? 0) + (askSize ?? 0);
   return {
-    bid: q.bid ?? null,
-    ask: q.ask ?? null,
+    bid: priceOrNull(q.bid),
+    ask: priceOrNull(q.ask),
     bid_size: bidSize,
     ask_size: askSize,
     buy_ratio_pct: total > 0 ? round4((bidSize! / total) * 100) : null,
@@ -342,8 +357,9 @@ export function parseSpikeQuote(q: any): SpikeQuote {
     market_state: state,
     name: q.shortName ?? q.longName ?? null,
     day_change_pct: q.regularMarketChangePercent ?? null,
-    bid: q.bid ?? null,
-    ask: q.ask ?? null,
+    // 0 이하는 가격이 아니라 "값 없음"이다 — priceOrNull 주석 참고.
+    bid: priceOrNull(q.bid),
+    ask: priceOrNull(q.ask),
     bid_size: q.bidSize ?? null,
     ask_size: q.askSize ?? null,
   };
