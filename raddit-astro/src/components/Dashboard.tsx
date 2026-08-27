@@ -209,7 +209,7 @@ export default function Dashboard() {
   const [dlgPrice, setDlgPrice] = createSignal("");
   const [dlgChgHtml, setDlgChgHtml] = createSignal("");
   const [dlgRedditInfo, setDlgRedditInfo] = createSignal("");
-  const [dlgRange, setDlgRange] = createSignal("min");
+  const [dlgRange, setDlgRange] = createSignal("day");
   const [dlgStatus, setDlgStatus] = createSignal("");
   const [dlgSummary, setDlgSummary] = createSignal("");
   const [dlgIndicators, setDlgIndicators] = createSignal<[string, string][]>([]);
@@ -647,7 +647,7 @@ export default function Dashboard() {
   // ── 상세 모달 ──
   function openDetail(ticker: string, fallbackName?: string) {
     const d = rows().find(r => r.ticker === ticker) || null;
-    setDlgTicker(ticker); setDlgRange("min");
+    setDlgTicker(ticker); setDlgRange("day");
     setDlgName((d && d.name) || fallbackName || "");
     setDlgPrice(d && d.price != null ? fmtPrice(d.price) : "");
     setDlgChgHtml(d && d.chg != null
