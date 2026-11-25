@@ -23,6 +23,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # Node 22 기본 npm(10.x)은 이 의존성 트리에서 arborist 오류(edgesOut of null)로 실패한다
+      - name: Use npm 11
+        run: npm install -g npm@11.16.0
 
       - name: Resolve version
         working-directory: raddit-astro
