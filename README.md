@@ -34,8 +34,8 @@ $5 미만 페니주식만 선별해 보여주는 대시보드입니다.
 
 | 환경 | 주소 |
 |------|------|
-| **운영(Production)** | **👉 [raddit 워치보드](https://raddit.up.railway.app)** |
-| 개발(Dev) | 🔧 [raddit 개발 버전](https://raddit-dev.up.railway.app) |
+| **운영(Production)** | **👉 [raddit 워치보드](https://raddit.43-200-205-8.sslip.io)** |
+| 개발(Dev) | 🔧 [raddit 개발 버전](https://raddit-dev.43-200-205-8.sslip.io) |
 
 > 별도 설치나 가입 없이 브라우저에서 바로 이용할 수 있습니다.
 
