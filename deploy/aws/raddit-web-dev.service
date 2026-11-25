@@ -1,0 +1,20 @@
+[Unit]
+Description=raddit web (Astro SSR) — dev
+After=network-online.target raddit-reddit-dev.service
+Wants=network-online.target
+
+[Service]
+User=raddit
+WorkingDirectory=/opt/raddit-dev/web
+EnvironmentFile=/etc/raddit/dev.env
+Environment=HOST=127.0.0.1 PORT=4321 NODE_ENV=production
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/usr/bin/node ./dist/server/entry.mjs
+Restart=always
+RestartSec=5
+# 같은 서버의 다른 서비스를 보호: 넘치면 raddit 쪽만 죽는다
+MemoryHigh=300M
+MemoryMax=380M
+
+[Install]
+WantedBy=multi-user.target

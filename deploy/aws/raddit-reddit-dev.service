@@ -1,0 +1,18 @@
+[Unit]
+Description=raddit reddit RPC (FastAPI) — dev
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=raddit
+WorkingDirectory=/opt/raddit-dev/reddit
+EnvironmentFile=/etc/raddit/dev.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/raddit-dev/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=5
+MemoryHigh=120M
+MemoryMax=160M
+
+[Install]
+WantedBy=multi-user.target
