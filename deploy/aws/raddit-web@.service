@@ -1,0 +1,22 @@
+# 인스턴스 이름 = 환경 (dev | prod). 예: raddit-web@prod
+[Unit]
+Description=raddit web (Astro SSR) — %i
+After=network-online.target raddit-reddit@%i.service
+Wants=network-online.target
+
+[Service]
+User=raddit
+WorkingDirectory=/opt/raddit-%i/web
+# WEB_PORT·RPC_PORT 등 환경별 값과 비밀값
+EnvironmentFile=/etc/raddit/%i.env
+Environment=HOST=127.0.0.1 NODE_ENV=production
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/bin/sh -c 'PORT=$WEB_PORT exec /usr/bin/node ./dist/server/entry.mjs'
+Restart=always
+RestartSec=5
+# 같은 서버의 다른 서비스를 보호: 넘치면 raddit 쪽만 죽는다
+MemoryHigh=300M
+MemoryMax=380M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+# 인스턴스 이름 = 환경 (dev | prod). 예: raddit-reddit@prod
+[Unit]
+Description=raddit reddit RPC (FastAPI) — %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=raddit
+WorkingDirectory=/opt/raddit-%i/reddit
+EnvironmentFile=/etc/raddit/%i.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/sh -c 'exec /opt/raddit-%i/venv/bin/uvicorn app:app --host 127.0.0.1 --port $RPC_PORT'
+Restart=always
+RestartSec=5
+MemoryHigh=120M
+MemoryMax=160M
+
+[Install]
+WantedBy=multi-user.target

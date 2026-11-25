@@ -1,0 +1,9 @@
+raddit.43-200-205-8.sslip.io {
+	encode gzip
+	reverse_proxy 127.0.0.1:4322
+}
+
+raddit-dev.43-200-205-8.sslip.io {
+	encode gzip
+	reverse_proxy 127.0.0.1:4321
+}

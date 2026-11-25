@@ -1,0 +1,101 @@
+name: Deploy (AWS Lightsail)
+
+# main push → 운영(raddit.43-200-205-8.sslip.io), dev push → 개발(raddit-dev.43-200-205-8.sslip.io)
+on:
+  push:
+    branches: [main, dev]
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.ref_name }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # 운영 릴리스 태그 push
+    concurrency:
+      group: deploy-${{ github.ref_name }}
+      cancel-in-progress: false
+    steps:
+      - name: Resolve environment
+        id: env
+        run: |
+          case "$GITHUB_REF_NAME" in
+            main) echo "env=prod" >> "$GITHUB_OUTPUT"; echo "tag=true" >> "$GITHUB_OUTPUT"
+                  echo "url=https://raddit.43-200-205-8.sslip.io/" >> "$GITHUB_OUTPUT" ;;
+            dev)  echo "env=dev" >> "$GITHUB_OUTPUT"; echo "tag=false" >> "$GITHUB_OUTPUT"
+                  echo "url=https://raddit-dev.43-200-205-8.sslip.io/" >> "$GITHUB_OUTPUT" ;;
+            *) echo "unsupported ref" >&2; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Node 22 기본 npm(10.x)은 이 의존성 트리에서 arborist 오류(edgesOut of null)로 실패한다
+      - name: Use npm 11
+        run: npm install -g npm@11.16.0
+
+      - name: Resolve version
+        working-directory: raddit-astro
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          LATEST=${LATEST:-v0.0.0}
+          if [ "${{ steps.env.outputs.env }}" = "prod" ]; then
+            if git describe --exact-match --tags HEAD 2>/dev/null | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              VERSION="${LATEST#v}"   # 이미 태그된 커밋(재배포)
+            elif [ "${{ steps.env.outputs.tag }}" = "true" ]; then
+              IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+              NEW_TAG="v${MAJOR}.$((MINOR + 1)).0"
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+              git push origin "$NEW_TAG"
+              VERSION="${NEW_TAG#v}"
+            else
+              VERSION="${LATEST#v}"
+            fi
+          else
+            AHEAD=$(git rev-list --count "${LATEST}..HEAD" 2>/dev/null || echo 0)
+            if [ "$AHEAD" -eq 0 ]; then VERSION="${LATEST#v}"; else VERSION="${LATEST#v}-dev.${AHEAD}.${SHA}"; fi
+          fi
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          echo "Resolved version: $VERSION"
+
+      # 서버(RAM 1GB, 다른 서비스와 동거)에서는 빌드도 npm 설치도 하지 않는다.
+      # 여기서 빌드하고 런타임 의존성만 남긴 node_modules 까지 묶어 보낸다.
+      - name: Build web
+        working-directory: raddit-astro
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm prune --omit=dev
+
+      - name: Bundle
+        id: bundle
+        run: |
+          B="raddit-${{ steps.env.outputs.env }}-${GITHUB_SHA}.tgz"
+          mkdir -p bundle/web bundle/reddit
+          cp -r raddit-astro/dist raddit-astro/node_modules raddit-astro/package.json bundle/web/
+          cp raddit-reddit/app.py raddit-reddit/reddit.py raddit-reddit/requirements.txt bundle/reddit/
+          tar -czf "$B" -C bundle web reddit
+          ls -lh "$B"
+          echo "name=$B" >> "$GITHUB_OUTPUT"
+
+      - name: Upload and deploy
+        env:
+          SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEV_SSH_HOST }}
+          B: ${{ steps.bundle.outputs.name }}
+          ENV: ${{ steps.env.outputs.env }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          scp "$B" "raddit-deploy@${HOST}:/tmp/$B"
+          ssh "raddit-deploy@${HOST}" "sudo /opt/raddit/deploy.sh $ENV /tmp/$B"
+
+      - name: Smoke test
+        run: curl -fsS -m 20 -o /dev/null -w "%{http_code}\n" --retry 5 --retry-delay 3 "${{ steps.env.outputs.url }}"
