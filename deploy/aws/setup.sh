@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Lightsail(Ubuntu 24.04) 최초 1회 설치. 루트로 실행: sudo bash setup.sh
+# Lightsail(Ubuntu 24.04) 설치. 루트로 실행, 여러 번 실행해도 안전:
+#   sudo bash setup.sh dev prod
 # 이후 배포는 GitHub Actions(deploy.yml)가 deploy.sh 를 호출한다.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+ENVS=("${@:-dev}")
 
 # Node 22 · Python venv · Caddy
 if ! command -v node >/dev/null || ! node -v | grep -q '^v22'; then
@@ -16,27 +18,29 @@ if ! command -v caddy >/dev/null; then
   apt-get update && apt-get install -y caddy
 fi
 
-# 실행 계정 · 디렉터리
+# 실행 계정 · 공용 파일
 id raddit >/dev/null 2>&1 || useradd -r -m -d /var/lib/raddit -s /usr/sbin/nologin raddit
-install -d -o raddit -g raddit /opt/raddit-dev /var/lib/raddit/dev
-[ -x /opt/raddit-dev/venv/bin/pip ] || python3 -m venv /opt/raddit-dev/venv
-chown -R raddit:raddit /opt/raddit-dev/venv
-install -m 755 "$HERE/deploy.sh" /opt/raddit-dev/deploy.sh
-
-# 환경변수 (값은 서버에서 직접 채운다 — 저장소에 두지 않음)
+install -d -m 755 /opt/raddit
+install -m 755 "$HERE/deploy.sh" /opt/raddit/deploy.sh
 install -d -m 750 /etc/raddit
-[ -f /etc/raddit/dev.env ] || install -m 640 -g raddit "$HERE/dev.env.example" /etc/raddit/dev.env
-
-install -m 644 "$HERE/raddit-web-dev.service" "$HERE/raddit-reddit-dev.service" /etc/systemd/system/
+install -m 644 "$HERE/raddit-web@.service" "$HERE/raddit-reddit@.service" /etc/systemd/system/
 install -m 644 "$HERE/Caddyfile" /etc/caddy/Caddyfile
 systemctl daemon-reload
-systemctl enable raddit-web-dev raddit-reddit-dev
+
+# 환경별 디렉터리 · venv · 환경파일(값은 서버에서 채운다 — 저장소에 두지 않음)
+for ENV in "${ENVS[@]}"; do
+  install -d -o raddit -g raddit "/opt/raddit-$ENV" "/var/lib/raddit/$ENV"
+  [ -x "/opt/raddit-$ENV/venv/bin/pip" ] || python3 -m venv "/opt/raddit-$ENV/venv"
+  chown -R raddit:raddit "/opt/raddit-$ENV/venv"
+  [ -f "/etc/raddit/$ENV.env" ] || install -m 640 -g raddit "$HERE/env.example" "/etc/raddit/$ENV.env"
+  systemctl enable "raddit-web@$ENV" "raddit-reddit@$ENV"
+done
 systemctl reload-or-restart caddy
-echo "setup done — /etc/raddit/dev.env 를 채운 뒤 첫 배포를 실행하세요"
 
 # 배포 전용 계정: Actions 는 이 계정으로 접속해 deploy.sh 만 sudo 로 실행할 수 있다
 id raddit-deploy >/dev/null 2>&1 || useradd -m -s /bin/bash raddit-deploy
 install -d -m 700 -o raddit-deploy -g raddit-deploy /home/raddit-deploy/.ssh
-echo 'raddit-deploy ALL=(root) NOPASSWD: /opt/raddit-dev/deploy.sh' > /etc/sudoers.d/raddit-deploy
+echo 'raddit-deploy ALL=(root) NOPASSWD: /opt/raddit/deploy.sh' > /etc/sudoers.d/raddit-deploy
 chmod 440 /etc/sudoers.d/raddit-deploy
 visudo -cf /etc/sudoers.d/raddit-deploy
+echo "setup done (${ENVS[*]}) — /etc/raddit/<env>.env 를 채운 뒤 배포하세요"

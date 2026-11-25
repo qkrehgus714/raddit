@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# 서버에서 실행. Actions 가 /tmp/raddit-dev-<sha>.tgz 를 올린 뒤 호출한다.
-#   sudo /opt/raddit-dev/deploy.sh /tmp/raddit-dev-<sha>.tgz
+# 서버에서 실행. Actions 가 번들을 /tmp 에 올린 뒤 호출한다.
+#   sudo /opt/raddit/deploy.sh <dev|prod> /tmp/raddit-<env>-<sha>.tgz
 set -euo pipefail
-BUNDLE="$1"
-ROOT=/opt/raddit-dev
+ENV="${1:-}"; BUNDLE="${2:-}"
+case "$ENV" in dev|prod) ;; *) echo "env must be dev|prod" >&2; exit 2 ;; esac
+case "$BUNDLE" in /tmp/raddit-"$ENV"-*.tgz) ;; *) echo "bad bundle path" >&2; exit 2 ;; esac
+[ -f "$BUNDLE" ] || { echo "bundle not found" >&2; exit 2; }
+
+ROOT=/opt/raddit-$ENV
+WEB_PORT=$(grep -E '^WEB_PORT=' /etc/raddit/$ENV.env | cut -d= -f2)
 STAGE=$(mktemp -d)
 tar -xzf "$BUNDLE" -C "$STAGE"
 
@@ -17,14 +22,14 @@ if [ -d "$STAGE/reddit" ]; then
   "$ROOT/venv/bin/pip" install -q -r "$STAGE/reddit/requirements.txt"
   rm -rf "$ROOT/reddit"; mv "$STAGE/reddit" "$ROOT/reddit"
 fi
-chown -R raddit:raddit "$ROOT/web" "$ROOT/reddit" 2>/dev/null || true
+chown -R raddit:raddit "$ROOT/web" "$ROOT/reddit"
 rm -rf "$STAGE" "$BUNDLE"
 
-systemctl restart raddit-reddit-dev raddit-web-dev
+systemctl restart "raddit-reddit@$ENV" "raddit-web@$ENV"
 for i in $(seq 1 30); do
-  curl -fsS -o /dev/null http://127.0.0.1:4321/ && { echo "web healthy"; exit 0; }
+  curl -fsS -o /dev/null "http://127.0.0.1:$WEB_PORT/" && { echo "web@$ENV healthy"; exit 0; }
   sleep 1
 done
-echo "web did not become healthy" >&2
-journalctl -u raddit-web-dev -n 40 --no-pager >&2
+echo "web@$ENV did not become healthy" >&2
+journalctl -u "raddit-web@$ENV" -n 40 --no-pager >&2
 exit 1
