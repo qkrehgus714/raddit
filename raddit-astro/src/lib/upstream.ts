@@ -489,6 +489,89 @@ export async function fetchFinraShortVolume(now: Date = new Date()): Promise<Fin
   return null;
 }
 
+// ── 내부자 매매 (#91) — Yahoo v10 quoteSummary, insiderTransactions·netSharePurchaseActivity ──
+
+const YAHOO_INSIDER_URL = (ticker: string) =>
+  `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=insiderTransactions,netSharePurchaseActivity`;
+
+export interface InsiderTransaction {
+  filer_name: string | null;   // filerName
+  relation: string | null;     // filerRelation (예: "Chief Financial Officer")
+  text: string | null;         // transactionText (예: "Sale at price 402.20 per share.")
+  shares: number | null;       // shares.raw
+  value: number | null;        // value.raw (거래 금액 — 결손 잦음)
+  date: number | null;         // startDate.raw (epoch sec)
+}
+
+export interface InsiderActivity {
+  period: string | null;               // period (예: "6m")
+  buy_count: number | null;            // buyInfoCount.raw
+  buy_shares: number | null;           // buyInfoShares.raw
+  sell_count: number | null;           // sellInfoCount.raw
+  sell_shares: number | null;          // sellInfoShares.raw
+  net_shares: number | null;           // netInfoShares.raw (순매수, 음수 = 순매도)
+  net_pct_shares: number | null;       // netPercentInsiderShares.raw × 100 (%) — 지분 대비 변화율
+  total_insider_shares: number | null; // totalInsiderShares.raw
+}
+
+export interface InsiderData {
+  activity: InsiderActivity | null;
+  transactions: InsiderTransaction[]; // 최신순 최대 5건
+}
+
+/** v10 quoteSummary 응답 → 내부자 매매 6개월 요약 + 최근 거래. 전 필드 결손 허용(null). */
+export function parseInsider(raw: any): InsiderData {
+  const result = raw?.quoteSummary?.result?.[0] ?? {};
+  const act = result.netSharePurchaseActivity;
+  const netPct = act?.netPercentInsiderShares?.raw;
+  const activity: InsiderActivity | null = act ? {
+    period: act.period ?? null,
+    buy_count: act.buyInfoCount?.raw ?? null,
+    buy_shares: act.buyInfoShares?.raw ?? null,
+    sell_count: act.sellInfoCount?.raw ?? null,
+    sell_shares: act.sellInfoShares?.raw ?? null,
+    net_shares: act.netInfoShares?.raw ?? null,
+    net_pct_shares: netPct != null ? round4(netPct * 100) : null,
+    total_insider_shares: act.totalInsiderShares?.raw ?? null,
+  } : null;
+
+  const rawTx: any[] = result.insiderTransactions?.transactions ?? [];
+  const transactions: InsiderTransaction[] = rawTx
+    .map((t) => ({
+      filer_name: t.filerName ?? null,
+      relation: t.filerRelation ?? null,
+      text: t.transactionText ?? null,
+      shares: t.shares?.raw ?? null,
+      value: t.value?.raw ?? null,
+      date: t.startDate?.raw ?? null,
+    }))
+    .sort((a, b) => (b.date ?? 0) - (a.date ?? 0))
+    .slice(0, 5);
+
+  return { activity, transactions };
+}
+
+/**
+ * 내부자 매매 조회 (crumb 인증 — fetchShortInterest 패턴). 401/403 시 재발급 후 1회 재시도.
+ * 실패 시 throw — getInsiderData 의 try/catch 가 error 로 격리한다.
+ */
+export async function fetchInsider(ticker: string, retry = true): Promise<InsiderData> {
+  const { cookie, crumb } = await getYahooAuth();
+  const url = `${YAHOO_INSIDER_URL(ticker)}&crumb=${encodeURIComponent(crumb)}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": BROWSER_UA, Cookie: cookie },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    if (retry && (res.status === 401 || res.status === 403)) {
+      yahooAuth = null;
+      return fetchInsider(ticker, false);
+    }
+    throw new Error(`Yahoo quoteSummary 응답 ${res.status}`);
+  }
+  return parseInsider(await res.json());
+}
+
 export interface ChartData { meta: Record<string, any>; points: Point[]; }
 
 function round4(v: number): number { return Math.round(v * 1e4) / 1e4; }

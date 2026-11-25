@@ -239,6 +239,17 @@ export default function Dashboard() {
   }
   const [shortD, setShortD] = createSignal<ShortData | null>(null);
   const [shortLoading, setShortLoading] = createSignal(false);
+  // 내부자 매매 (#91) — /api/insider (Yahoo 6개월 순매수 요약 + 최근 거래)
+  interface InsiderData {
+    activity: { period: string | null; buy_count: number | null; buy_shares: number | null;
+      sell_count: number | null; sell_shares: number | null; net_shares: number | null;
+      net_pct_shares: number | null; total_insider_shares: number | null } | null;
+    transactions: { filer_name: string | null; relation: string | null; text: string | null;
+      shares: number | null; value: number | null; date: number | null }[];
+    error: string | null;
+  }
+  const [insiderD, setInsiderD] = createSignal<InsiderData | null>(null);
+  const [insiderLoading, setInsiderLoading] = createSignal(false);
   const [stSent, setStSent] = createSignal<{bullish_pct:number|null; messages:{body:string;username:string;ts:number|null;sentiment:string|null}[]; total:number; tagged:number} | null>(null);
   const [stEmpty, setStEmpty] = createSignal("");
   const [stEnabled, setStEnabled] = createSignal(false);
@@ -666,10 +677,11 @@ export default function Dashboard() {
     clearChart();
     loadDetail();
     loadPosts(ticker);
-    // 펀더멘털(SEC EDGAR)·공매도(FINRA)는 주식 전용 개념 — 크립토 티커는 조회하지 않음
+    // 펀더멘털(SEC EDGAR)·공매도(FINRA)·내부자 매매(Yahoo)는 주식 전용 개념 — 크립토 티커는 조회하지 않음
     if (!isCryptoTicker(ticker)) {
       loadFundamentals(ticker);
       loadShort(ticker);
+      loadInsider(ticker);
     }
   }
 
@@ -788,6 +800,23 @@ export default function Dashboard() {
       setShortD({ interest: null, daily: null, error: "불러오기 실패" });
     } finally {
       if (dlgTicker() === ticker) setShortLoading(false);
+    }
+  }
+
+  // ── 내부자 매매 (#91) ── loadShort 와 동일 패턴. 실패해도 다른 패널 영향 없음.
+  async function loadInsider(ticker: string) {
+    setInsiderD(null); setInsiderLoading(true);
+    try {
+      const res = await fetch(`/api/insider?ticker=${encodeURIComponent(ticker)}`);
+      const data = await res.json();
+      if (dlgTicker() !== ticker) return;
+      if (!res.ok) throw new Error(data.error || res.status);
+      setInsiderD(data);
+    } catch {
+      if (dlgTicker() !== ticker) return;
+      setInsiderD({ activity: null, transactions: [], error: "불러오기 실패" });
+    } finally {
+      if (dlgTicker() === ticker) setInsiderLoading(false);
     }
   }
 
@@ -1396,6 +1425,42 @@ export default function Dashboard() {
                   <div class="value">{shortD()!.daily ? `${shortD()!.daily!.short_vol_pct.toFixed(1)}%` : "-"}</div>
                 </div>
               </div>
+            </Show>
+          </Show>
+          </Show>
+          <Show when={!isCryptoTicker(dlgTicker())}>
+          <h3 class="dlg-sub">내부자 매매 <span class="dlg-note">최근 6개월 · 참고 지표(옵션 행사 포함)</span></h3>
+          <Show when={insiderLoading()}><p class="dlg-status">내부자 매매 데이터 불러오는 중…</p></Show>
+          <Show when={!insiderLoading() && insiderD()}>
+            <Show when={insiderD()!.activity || insiderD()!.transactions.length}
+              fallback={<p class="dlg-status">내부자 매매 데이터 불러오기 실패</p>}>
+              <div class="ind-grid">
+                <div class="ind">
+                  <div class="label">순매수 (6개월)</div>
+                  <div class="value">{insiderD()!.activity?.net_shares != null
+                    ? `${insiderD()!.activity!.net_shares! > 0 ? "+" : ""}${insiderD()!.activity!.net_shares!.toLocaleString("en-US")}주` : "-"}</div>
+                </div>
+                <div class="ind">
+                  <div class="label">지분 대비 변화율</div>
+                  <div class="value">{insiderD()!.activity?.net_pct_shares != null
+                    ? `${insiderD()!.activity!.net_pct_shares! > 0 ? "+" : ""}${insiderD()!.activity!.net_pct_shares!.toFixed(2)}%` : "-"}</div>
+                </div>
+                <div class="ind">
+                  <div class="label">매수 / 매도 건수</div>
+                  <div class="value">{insiderD()!.activity?.buy_count != null || insiderD()!.activity?.sell_count != null
+                    ? `${insiderD()!.activity?.buy_count ?? "-"} / ${insiderD()!.activity?.sell_count ?? "-"}` : "-"}</div>
+                </div>
+              </div>
+              <ul class="post-list">
+                <Show when={insiderD()!.transactions.length} fallback={<li class="post-empty">최근 거래 내역이 없습니다</li>}>
+                  <For each={insiderD()!.transactions}>{(t) => (
+                    <li>
+                      <span class="st-body">{t.filer_name || "(이름 비공개)"}{t.relation ? ` · ${t.relation}` : ""}</span>
+                      <span class="post-meta">{[t.text, t.shares != null ? `${t.shares.toLocaleString("en-US")}주` : null, timeAgo(t.date)].filter(Boolean).join(" · ")}</span>
+                    </li>
+                  )}</For>
+                </Show>
+              </ul>
             </Show>
           </Show>
           </Show>
