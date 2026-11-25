@@ -3,7 +3,7 @@ name: Deploy (AWS Lightsail)
 # dev push → 개발 환경(raddit-dev.43-200-205-8.sslip.io). 운영(main)은 후속 이슈에서 이전.
 on:
   push:
-    branches: [dev, ci/aws-dev-deploy]  # TEMP: 머지 전 검증용, 제거 예정
+    branches: [dev]
   workflow_dispatch:
 
 concurrency:
@@ -69,4 +69,4 @@ jobs:
           ssh "raddit-deploy@${HOST}" "sudo /opt/raddit-dev/deploy.sh /tmp/$B"
 
       - name: Smoke test
-        run: curl -fsS -o /dev/null -w "%{http_code}\n" --retry 5 --retry-delay 3 https://raddit-dev.43-200-205-8.sslip.io/
+        run: curl -fsS -m 20 -o /dev/null -w "%{http_code}\n" --retry 5 --retry-delay 3 https://raddit-dev.43-200-205-8.sslip.io/
