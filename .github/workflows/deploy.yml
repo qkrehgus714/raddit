@@ -3,7 +3,7 @@ name: Deploy (AWS Lightsail)
 # main push → 운영(raddit.43-200-205-8.sslip.io), dev push → 개발(raddit-dev.43-200-205-8.sslip.io)
 on:
   push:
-    branches: [main, dev, ci/aws-dev-deploy]  # TEMP: ci/aws-dev-deploy 는 운영 최초 배포용, 제거 예정
+    branches: [main, dev]
 
 jobs:
   deploy:
@@ -19,19 +19,15 @@ jobs:
         id: env
         run: |
           case "$GITHUB_REF_NAME" in
-            main) echo "env=prod" >> "$GITHUB_OUTPUT"; echo "ref=main" >> "$GITHUB_OUTPUT"; echo "tag=true" >> "$GITHUB_OUTPUT"
+            main) echo "env=prod" >> "$GITHUB_OUTPUT"; echo "tag=true" >> "$GITHUB_OUTPUT"
                   echo "url=https://raddit.43-200-205-8.sslip.io/" >> "$GITHUB_OUTPUT" ;;
-            dev)  echo "env=dev" >> "$GITHUB_OUTPUT"; echo "ref=dev" >> "$GITHUB_OUTPUT"; echo "tag=false" >> "$GITHUB_OUTPUT"
+            dev)  echo "env=dev" >> "$GITHUB_OUTPUT"; echo "tag=false" >> "$GITHUB_OUTPUT"
                   echo "url=https://raddit-dev.43-200-205-8.sslip.io/" >> "$GITHUB_OUTPUT" ;;
-            # TEMP: 운영 최초 배포 — main 코드를 태그 없이 배포
-            ci/aws-dev-deploy) echo "env=prod" >> "$GITHUB_OUTPUT"; echo "ref=main" >> "$GITHUB_OUTPUT"; echo "tag=false" >> "$GITHUB_OUTPUT"
-                  echo "url=https://raddit.43-200-205-8.sslip.io/" >> "$GITHUB_OUTPUT" ;;
             *) echo "unsupported ref" >&2; exit 1 ;;
           esac
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.env.outputs.ref }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
