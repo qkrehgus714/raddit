@@ -127,11 +127,13 @@ chore: 의존성 업데이트
 
 ### ⚠️ Vercel Preview 실패는 정상이다
 
-> **PR 체크의 `Vercel` fail은 무시한다.** 배포 수단이 **Railway 자동 배포**(main·dev 푸시 → GitHub Actions `railway-deploy.yml`)로 이전되었기 때문이다.
+> **PR 체크의 `Vercel` fail은 무시한다.** 배포 수단이 **AWS Lightsail 자동 배포**(main·dev 푸시 → GitHub Actions `deploy.yml`)로 이전되었기 때문이다.
 > 이미 머지된 PR에서도 항상 실패하는 상태이며, 내 변경과 무관한 기준선 상태다.
 
 - **에이전트·기여자 주의**: `Vercel` fail을 근거로 "이 diff가 빌드를 깨뜨렸다"고 판단하지 말 것. 수정 여부는 로컬 게이트로 검증한다:
   - 웹(`raddit-astro`): `npm run build` + `npm test`
   - Reddit 수집기(`raddit-reddit`): 해당 테스트 엔트리
 - **머지 가능 판단 기준**: `CodeRabbit` 통과(SUCCESS) + GitHub 상태 `MERGEABLE` 이면 머지 진행한다. `Vercel` 체크는 판단 대상에서 제외.
-- 실제 배포 흐름: `dev` 푸시 → 개발환경, `dev → main` PR 병합 → 프로덕션(Railway).
+- 실제 배포 흐름: `dev` 푸시 → 개발환경, `dev → main` PR 병합 → 프로덕션(AWS Lightsail, 릴리스 태그 vX.Y.0 자동 생성).
+  - 운영: https://raddit.43-200-205-8.sslip.io · 개발: https://raddit-dev.43-200-205-8.sslip.io
+  - 서버 구성·최초 설치는 `deploy/aws/` 참고 (비밀값은 서버 `/etc/raddit/<env>.env` 에만 둔다)
